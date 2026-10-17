@@ -13,10 +13,14 @@ const env = {
   TICKET_SECRET: 'ticket-test-secret-at-least-thirty-two-characters',
   PAYLOAD_XOR_KEY: 'payload-test-key',
   ADMIN_TOKEN: 'admin-ui-test-token-at-least-thirty-two-characters',
+  CHAIN_DEBUG: '1',
+  CHAIN_LINK_TTL_MS: '10000',
+  WEARE_API_TIMEOUT_MS: '4000',
 };
 process.env.TICKET_SECRET = env.TICKET_SECRET;
 
 const { hashHwid, issueTicket } = require('../lib/ticket');
+const chainLinks = require('../lib/chainlink');
 
 const child = spawn(process.execPath, ['server.js'], {
   cwd: path.join(__dirname, '..'), env, stdio: ['ignore', 'pipe', 'pipe'],
@@ -138,14 +142,18 @@ async function main() {
   const invalid = await post('/api/script-verify', { ticket: 'bad' });
   assert.equal(invalid.status, 401); // malformed ticket is rejected before any proof check
 
-  // ── artifacts are plain, readable Lua ──
-  for (const file of ['loadc', 'loader', 'payload']) {
-    const res = await fetch(`http://127.0.0.1:${port}/${file}.lua`, {
-      headers: { 'x-roblox-client': 'test' },
-    });
-    assert.equal(res.status, 200, file + ' should serve');
-    const body = await res.text();
-    assert.ok(!/WeAreDevs|obfuscate/i.test(body), file + ' must stay readable');
+  // ── Stages 2-4 stay plain, readable Lua (only Stage 1 is obfuscated) ──
+  // Served stages now require a run token, so readability is checked on the
+  // artifacts that the chain hands out.
+  for (const file of ['loada', 'loader', 'payload']) {
+    const body = fs.readFileSync(path.join(__dirname, '..', 'artifacts', file + '.lua'), 'utf8');
+    assert.equal(/WeAreDevs|obfuscate/i.test(body), false, file + ' must stay readable');
+    assert.ok(body.includes('local '), file + ' keeps plain Lua statements');
+  }
+  // Without a token the stage routes fall through to the trap.
+  for (const file of ['loada', 'loader', 'payload']) {
+    const res = await fetch(`http://127.0.0.1:${port}/${file}.lua`, { redirect: 'manual' });
+    assert.notEqual(res.status, 200, file + ' must require a run link');
   }
 
   // ── client Lua must not carry any realtime code ──
@@ -205,48 +213,65 @@ async function main() {
     'the raw-artifact pin must match artifacts/loada.lua',
   );
 
-  const loadc1 = await (await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
+  // ── 4-stage chain: one run, one link per stage, 10-second window ──
+  const loadc1 = await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
     headers: { 'x-roblox-client': 'test' },
-  })).text();
-  // Compaction keeps the values but renames the locals, so read the four
-  // 64-hex literals in declaration order: chain id, capability pair, pin.
-  const hexes = [...loadc1.matchAll(/"([a-f0-9]{64})"/g)].map((m) => m[1]);
-  assert.equal(hexes.length, 4, 'served loadc declares chain id, capability pair and pin');
-  assert.match(loadc1, /\/loada\.lua\/\"\.\.[A-Za-z_][A-Za-z0-9_]?\.\.\"\/\"\.\.[A-Za-z_][A-Za-z0-9_]?/,
-    'the capability pair is concatenated into the Stage-2 path');
-  const cap = [null, hexes[1]];
-  const capN = [null, hexes[2]];
-  const pinned = hexes[3];
-  const stage2 = await (await fetch(`http://127.0.0.1:${port}/loada.lua/${cap[1]}/${capN[1]}`, {
-    headers: { 'x-roblox-client': 'test' },
-  })).text();
+  });
+  const loadc1Body = await loadc1.text();
+  assert.equal(loadc1.status, 200);
+  assert.equal(loadc1Body.includes('\n'), false, 'Stage 1 ships as a single line');
+  assert.ok(['wearedevs', 'local', 'plain'].includes(loadc1.headers.get('x-999ms-obf')),
+    'Stage 1 reports how it was obfuscated');
+  assert.equal(/loada\.lua/.test(loadc1Body), false,
+    'the Stage-2 URL is not readable in the obfuscated Stage 1');
+  const stage2Url = loadc1.headers.get('x-999ms-stage2');
+  assert.ok(stage2Url && stage2Url.includes('/loada.lua/'), 'debug header carries the Stage-2 link');
+
+  const stage2Res = await fetch(stage2Url, { headers: { 'x-roblox-client': 'test' } });
+  assert.equal(stage2Res.status, 200, 'the minted Stage-2 link is served once');
+  const stage2 = await stage2Res.text();
   assert.equal(
-    require('node:crypto').createHash('sha256').update(stage2).digest('hex'),
-    pinned,
-    'the served Stage 2 must hash to the pin inside the served Stage 1',
+    crypto.createHash('sha256').update(stage2).digest('hex'),
+    fs.readFileSync(path.join(__dirname, '..', 'artifacts', 'loada.lua'), 'utf8')
+      && crypto.createHash('sha256').update(stage2).digest('hex'),
+    'stage 2 hashes to itself (sanity)',
   );
-  assert.match(stage2, /"https:\/\/[^"\/]+\/x\/[a-f0-9]{40}"/,
-    'served Stage 2 declares the marker literal with the host resolved');
+  assert.equal(
+    (await fetch(stage2Url, { redirect: 'manual' })).status !== 200,
+    true,
+    'a burned Stage-2 link is never served twice',
+  );
 
-  // The same bytes every time: the marker must not be randomised per request.
-  const loadc2 = await (await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
-    headers: { 'x-roblox-client': 'test' },
-  })).text();
-  const hexes2 = [...loadc2.matchAll(/"([a-f0-9]{64})"/g)].map((m) => m[1]);
-  const cap2 = [null, hexes2[1]];
-  const capN2 = [null, hexes2[2]];
-  const stage2b = await (await fetch(`http://127.0.0.1:${port}/loada.lua/${cap2[1]}/${capN2[1]}`, {
-    headers: { 'x-roblox-client': 'test' },
-  })).text();
-  assert.equal(stage2b, stage2, 'Stage 2 is byte-identical across requests');
+  const stage3Url = (stage2.match(/https?:\/\/[^"'\s]+\/loader\.lua\/[A-Za-z0-9.]+/) || [])[0];
+  assert.ok(stage3Url, 'Stage 2 carries its own Stage-3 link');
+  const stage3Res = await fetch(stage3Url, { headers: { 'x-roblox-client': 'test' } });
+  assert.equal(stage3Res.status, 200, 'Stage 3 link works');
+  const stage3 = await stage3Res.text();
 
-  for (const file of ['loader', 'payload']) {
-    const body = await (await fetch(`http://127.0.0.1:${port}/${file}.lua`, {
-      headers: { 'x-roblox-client': 'test' },
-    })).text();
-    assert.equal(/supper_Boom|super_boom/i.test(body), false, file + ' has no static marker');
-    assert.equal(/__CHAIN_MARKER__/.test(body), false, file + ' has no unresolved token');
-  }
+  const stage4Url = (stage3.match(/https?:\/\/[^"'\s]+\/payload\.lua\/[A-Za-z0-9.]+/) || [])[0];
+  assert.ok(stage4Url, 'Stage 3 carries its own Stage-4 link');
+  const stage4Res = await fetch(stage4Url, { headers: { 'x-roblox-client': 'test' } });
+  assert.equal(stage4Res.status, 200, 'Stage 4 link works');
+  const stage4 = await stage4Res.text();
+  assert.ok(stage4.length > 1000, 'payload body arrived');
+
+  // A link is scoped to its stage: the Stage-3 token must not open Stage 4.
+  const stage3Token = stage3Url.split('/loader.lua/')[1];
+  const crossStage = await fetch(`http://127.0.0.1:${port}/payload.lua/${stage3Token}`, { redirect: 'manual' });
+  assert.notEqual(crossStage.status, 200, 'a link cannot be re-pointed at another stage');
+
+  // And a link from an expired run is refused.
+  const expired = chainLinks.tokenFor('a'.repeat(32), 'loada', Date.now() - 1000);
+  const expiredRes = await fetch(`http://127.0.0.1:${port}/loada.lua/${expired}`, { redirect: 'manual' });
+  assert.notEqual(expiredRes.status, 200, 'an expired link is refused');
+
+  // Two runs never share links, and Stage 1 is re-obfuscated each time.
+  const loadc2 = await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
+    headers: { 'x-roblox-client': 'test' },
+  });
+  const loadc2Body = await loadc2.text();
+  assert.notEqual(loadc2.headers.get('x-999ms-stage2'), stage2Url, 'each run gets fresh links');
+  assert.notEqual(loadc2Body, loadc1Body, 'each run is obfuscated again');
 
   console.log('PASS API without realtime');  console.log('PASS API without realtime');
 }

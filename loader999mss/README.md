@@ -176,3 +176,27 @@ marker ยังเป็น literal ตายตัว: `local a="@BASE_URL@/x/
 ตรวจว่าไม่มีการเปลี่ยนพฤติกรรม: `python3 e2e/ast_compare.py` เทียบ AST ของ source กับ artifact
 (ลบชื่อ local/คอมเมนต์, canonical literal) → MATCH ทั้ง 4 ไฟล์
 ส่วนต่างเดียวคือการตัดวงเล็บ `x + (v - 1)` → `x + v - 1` ซึ่งค่าตรงกัน (ทดสอบ 20k คู่)
+
+
+## 2026-10-17 — 4 สแตก ลิงก์ต่อลิงก์ อายุ 10 วิ + obf WeAreDevs ทุกรอบ
+
+```
+/loadc.lua ──► /loada.lua/<token> ──► /loader.lua/<token> ──► /payload.lua/<token>
+```
+
+- ทุก request ของ `loadc` จะสร้าง **run ใหม่ 1 ชุด**: chain id + ลิงก์ 3 ใบ (loada, loader, payload)
+  อายุ **10 วินาที** นับจากตอนออก และ **ใช้ได้ครั้งเดียวต่อ stage**
+- โทเคนมีรูปแบบ `<chainId>.<stage>.<exp>.<hmac>` → ตรวจได้แบบ stateless
+  (ยิงข้าม instance ของ Vercel ได้), ผูกกับ stage ของตัวเอง (เอา token ของ loader ไปเปิด payload ไม่ได้)
+- แต่ละ stage **pin sha256 ของ stage ถัดไป** ไว้ในตัว และตรวจก่อน `loadstring`
+- `loadc` ถูก **obfuscate ผ่าน API ของ wearedevs.net ทุกรอบ**
+  (`POST /api/obfuscate` → โค้ดใหม่ทุกครั้ง) ถ้า API ตอบ 429 จะ retry แบบ backoff
+  และถ้าล่มจริงจะ fallback ไป `lua-obfuscator` ในเครื่องเพื่อไม่ให้เชนขาด
+  (ดูได้จาก header `x-999ms-obf: wearedevs|local|plain`)
+- stages 2–4 ยังเป็น Lua อ่านออก บรรทัดเดียว ตัวแปร ≤2 ตัว ตามเดิม
+
+### ไฟล์ใหม่
+- `lib/chainlink.js` — ออก/ตรวจ/เผา token ของแต่ละ stage (HMAC, TTL 10 วิ, กัน replay)
+- `lib/obfuscate.js` — เรียก WeAreDevs API + retry + fallback + วัดเวลาเพื่อชดเชยหน้าต่าง 10 วิ
+- `source/loadc.template.lua` — รับ `__STAGE2_URL__` + `__STAGE2_SHA256__`
+- `source/savecheck.lua`, `source/loader.lua` — รับ `@NEXT@` / `@NEXT_SHA@`

@@ -47,9 +47,7 @@ function route(req) {
   const url = new URL(req.url, 'http://gateway.local');
   const query = Object.fromEntries(url.searchParams.entries());
   const routes = {
-    '/payload.lua': ['payload'],
     '/loadc.lua': ['artifact', 'loadc'],
-    '/loader.lua': ['artifact', 'loader'],
     '/999MS-sdk.lua': ['artifact', 'sdk'],
     '/api/health': ['health'],
     '/api/link': ['link-create'],
@@ -68,12 +66,11 @@ function route(req) {
     query.action = 'link-serve';
     query.p = linkMatch[1];
   }
-  const match = !linkMatch && url.pathname.match(/^\/loada\.lua\/([^/]+)\/([^/]+)$/);
-  if (match) {
+  const staged = !linkMatch && url.pathname.match(/^\/(loada|loader|payload)\.lua\/([^/]+)$/);
+  if (staged) {
     query.action = 'artifact';
-    query.name = 'loada';
-    query.d = match[1];
-    query.n = match[2];
+    query.name = staged[1];
+    query.t = staged[2];
   } else if (!linkMatch) {
     const mapped = routes[url.pathname] || ['trap'];
     query.action = mapped[0];

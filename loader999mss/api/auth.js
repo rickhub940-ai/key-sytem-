@@ -5,6 +5,8 @@ const path = require('node:path');
 const { verifyKey, createLink } = require('../lib/platoboost');
 const { issueTicket, verifyTicket, hashHwid } = require('../lib/ticket');
 const link = require('../lib/link');
+const chainLinks = require('../lib/chainlink');
+const { obfuscateStageOne, obfuscationBudgetMs } = require('../lib/obfuscate');
 const {
   createChallengeResponse,
   validateClientChallenge,
@@ -25,7 +27,6 @@ const {
 const sessions = new Map();
 const SESSION_TTL = 30 * 60 * 1000;
 const RUNTIME_TTL = 60 * 1000;
-const LOADA_PATH_TTL = 20 * 1000;
 const ARTIFACT_FILES = Object.freeze({
   loadc: 'loadc.lua',
   loada: 'loada.lua',
@@ -33,12 +34,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = 'caea9df1abfc709ae37ce82d52d311d01992e399d44207adcbde1542fc2a284d';
-// Capability redemption is additionally tracked for the lifetime of a warm
-// function. The signed capability is the cross-instance authority; the map
-// closes accidental/replayed fetches that return to the same instance.
-const redeemedStageCapabilities = new Map();
-
+const STAGE_TWO_RAW_SHA256 = 'ae25d7330d547590f3692f5bca4a113521fdf1bfe483bb1f6c96fccaad308784';
 
 // ═══ Rate limit ═══
 const rateLimit = new Map();
@@ -104,7 +100,11 @@ function requestOrigin(req) {
     (req && req.headers && (req.headers['x-forwarded-host'] || req.headers.host)) || '',
   ).split(',')[0].trim();
   if (!host || !/^[a-zA-Z0-9.:-]+$/.test(host)) return publicBaseUrl();
-  const proto = String((req.headers['x-forwarded-proto'] || 'https')).split(',')[0].trim();
+  const forwarded = req.headers['x-forwarded-proto'];
+  // Behind Vercel the forwarded header is authoritative. Locally (no proxy)
+  // fall back to the socket so tests and dev servers are served over http.
+  const plainSocket = !(req.socket && req.socket.encrypted);
+  const proto = String(forwarded || (plainSocket ? 'http' : 'https')).split(',')[0].trim();
   return `${proto === 'http' ? 'http' : 'https'}://${host}`;
 }
 
@@ -143,56 +143,6 @@ function applyChainTokens(body, baseUrl) {
   if (typeof body !== 'string') return body;
   if (baseUrl && body.includes('@BASE_URL@')) return body.replaceAll('@BASE_URL@', baseUrl);
   return body;
-}
-
-function loadaPathSecret() {
-  const secret = process.env.LOADA_PATH_SECRET || process.env.TICKET_SECRET;
-  return typeof secret === 'string' && secret.length >= 32 ? secret : null;
-}
-
-function capabilityTimestamp(d) {
-  return Number.parseInt(d.slice(0, 12), 16);
-}
-
-function isFreshCapabilityId(d) {
-  if (typeof d !== 'string' || !/^[a-f0-9]{64}$/.test(d)) return false;
-  const issuedAt = capabilityTimestamp(d);
-  const now = Date.now();
-  return Number.isSafeInteger(issuedAt) && issuedAt <= now + 5000 &&
-    now - issuedAt <= LOADA_PATH_TTL;
-}
-
-function signStagePath(stage, d, secret) {
-  return crypto.createHmac('sha256', secret).update(`999MS-stage-v2:${stage}:${d}`).digest('hex');
-}
-
-function createLoadaPathCapability() {
-  const secret = loadaPathSecret();
-  if (!secret) return null;
-  // Root Stage-2 id: current milliseconds plus 26 random bytes. It is minted
-  // into each generated loadc response and is the only chain path capability.
-  const d = Date.now().toString(16).padStart(12, '0') + crypto.randomBytes(26).toString('hex');
-  return { stage: 'loada', d, n: signStagePath('loada', d, secret) };
-}
-
-function readStageCapability(req, url, stage) {
-  const d = req.query?.d || url.searchParams.get('d');
-  const n = req.query?.n || url.searchParams.get('n');
-  const secret = loadaPathSecret();
-  if (!isFreshCapabilityId(d) || typeof n !== 'string' || !/^[a-f0-9]{64}$/.test(n) || !secret) return null;
-  if (!timingSafeStringEquals(n, signStagePath(stage, d, secret))) return null;
-  return { stage, d, n };
-}
-
-function consumeStageCapability(capability) {
-  const now = Date.now();
-  for (const [key, expiresAt] of redeemedStageCapabilities) {
-    if (expiresAt < now) redeemedStageCapabilities.delete(key);
-  }
-  const key = `${capability.stage}:${capability.d}`;
-  if (redeemedStageCapabilities.has(key)) return false;
-  redeemedStageCapabilities.set(key, capabilityTimestamp(capability.d) + LOADA_PATH_TTL);
-  return true;
 }
 
 // Browser trapping is cosmetic anti-scraping, never authorization. Mobile
@@ -330,24 +280,6 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // Payload remains the static final handoff from the legacy stage chain.
-  if (action === 'payload') {
-    if (req.method !== 'GET') return rejectOrTrap(req, res, 405);
-    if (trapBrowserArtifacts() && isBrowserRequest(req)) return trapRedirect(res);
-    try {
-      let body = readArtifact('payload');
-      if (typeof body !== 'string') return res.status(404).send('Not Found');
-      body = applyChainTokens(body, requestOrigin(req));
-      if (!body) return res.status(404).send('Not Found');
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).send(body);
-    } catch (error) {
-      console.error('[payload]', error.message);
-      return res.status(404).send('Not Found');
-    }
-  }
-
   // loadc is generated per request and is the only stage that mints a path
   // capability. The remaining legacy artifacts keep their static handoffs.
   if (action === 'artifact') {
@@ -474,60 +406,103 @@ function renderLoaderArtifact() {
   return `${LOADER_SCRIPT_NORMALIZER}${readArtifact('loader')}`;
 }
 
+// ═══ Stage rendering ═══
+// Stage bodies are deterministic for a given host and link, so the previous
+// stage can pin the exact bytes the next one will receive.
+function renderStageBody(name, baseUrl, nextUrl, nextSha) {
+  const raw = name === 'loader' ? renderLoaderArtifact() : readArtifact(name);
+  if (typeof raw !== 'string') return null;
+  let body = applyChainTokens(raw, baseUrl);
+  if (typeof nextUrl === 'string' && nextUrl) body = body.replaceAll('@NEXT@', nextUrl);
+  if (typeof nextSha === 'string' && nextSha) body = body.replaceAll('@NEXT_SHA@', nextSha);
+  return body;
+}
+
+const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
+
+// Builds one complete run: four bodies and the links that join them.
+function buildRun(baseUrl, chain) {
+  const url = (stage) => `${baseUrl}/${stage}.lua/${chain.tokens[stage]}`;
+  const payloadBody = renderStageBody('payload', baseUrl);
+  if (!payloadBody) return null;
+  const loaderBody = renderStageBody('loader', baseUrl, url('payload'), sha256(payloadBody));
+  if (!loaderBody) return null;
+  const loadaBody = renderStageBody('loada', baseUrl, url('loader'), sha256(loaderBody));
+  if (!loadaBody) return null;
+  return {
+    payload: payloadBody,
+    loader: loaderBody,
+    loada: loadaBody,
+    loadaUrl: url('loada'),
+    stage2Sha256: sha256(loadaBody),
+  };
+}
+
+// The chain is stateless, so every stage link can be recomputed from the
+// claim and the run rebuilt byte-for-byte on whichever instance serves it.
+function rebuildRun(baseUrl, claim) {
+  const tokens = {};
+  for (const stage of chainLinks.STAGES) {
+    tokens[stage] = chainLinks.tokenFor(claim.chainId, stage, claim.exp);
+  }
+  return buildRun(baseUrl, { chainId: claim.chainId, exp: claim.exp, tokens });
+}
+
 async function serveArtifact(req, res, name, url, origin) {
-  if (name === 'loadc') {
-    const body = renderLoadcArtifact(origin);
-    if (!body) return res.status(503).send('');
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).send(body);
-  }
-  if (name === 'loada') {
-    const capability = readStageCapability(req, url, 'loada');
-    if (!capability || !consumeStageCapability(capability)) return rejectOrTrap(req, res);
-  } else if (name !== 'loader' && name !== 'sdk') {
-    return rejectOrTrap(req, res);
-  }
-  try {
-    let body = name === 'loader' ? renderLoaderArtifact() : readArtifact(name);
-    if (typeof body !== 'string') return res.status(503).send('');
-    // Readable stages carry @BASE_URL@ so the host is never hard-coded.
-    body = applyChainTokens(body, origin || '');
-    if (!body) return res.status(503).send('');
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).send(body);
-  } catch (error) {
-    console.error('[artifact]', error.message);
-    return res.status(404).send('Not Found');
-  }
-}
-
-// ═══ Dynamic Stage-1 renderer ═══
-// /loadc.lua is rendered from the readable template in artifacts/loadc.lua.
-// No obfuscator is involved: the source served to the executor stays plain Lua
-// that anyone can audit line by line.
-function renderLoadcArtifact(origin) {
   const baseUrl = origin || publicBaseUrl();
-  if (!baseUrl) return null;
-  const capability = createLoadaPathCapability();
-  if (!capability) return null;
-  const stagedRaw = readArtifact('loada');
-  if (!stagedRaw) return null;
-  // Stage 1 pins exactly the bytes Stage 2 will receive, with the host already
-  // resolved for this request.
-  const stagedSource = applyChainTokens(stagedRaw, baseUrl);
-  if (!stagedSource) return null;
-  const stagedSha256 = crypto.createHash('sha256').update(stagedSource).digest('hex');
-  return fs.readFileSync(path.join(process.cwd(), 'artifacts', 'loadc.lua'), 'utf8')
-    .replaceAll('__CHAIN_ID__', crypto.randomBytes(32).toString('hex'))
-    .replaceAll('__CAP_D__', capability.d)
-    .replaceAll('__CAP_N__', capability.n)
-    .replaceAll('__STAGE2_SHA256__', stagedSha256)
-    .replaceAll('__BASE_URL__', baseUrl);
+  if (!baseUrl) return res.status(503).send('');
+
+  // Stage 1 is minted per request and obfuscated per request.
+  if (name === 'loadc') {
+    // Links are minted first (their URLs are inside the source), with the last
+    // measured obfuscation time added so the client still gets the full TTL.
+    const chain = chainLinks.createChain(Date.now(), obfuscationBudgetMs());
+    if (!chain) return res.status(503).send('');
+    const run = buildRun(baseUrl, chain);
+    if (!run) return res.status(503).send('');
+    const template = fs.readFileSync(path.join(process.cwd(), 'artifacts', 'loadc.lua'), 'utf8');
+    const rendered = template
+      .replaceAll('__CHAIN_ID__', chain.chainId)
+      .replaceAll('__STAGE2_URL__', run.loadaUrl)
+      .replaceAll('__STAGE2_SHA256__', run.stage2Sha256);
+    const obfuscated = await obfuscateStageOne(rendered);
+    if (!obfuscated) return res.status(503).send('');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('x-999ms-obf', obfuscated.method);
+    if (process.env.CHAIN_DEBUG === '1') res.setHeader('x-999ms-stage2', run.loadaUrl);
+    return res.status(200).send(obfuscated.body);
+  }
+
+  // Stage 2-4 need the link minted for this run.
+  if (name === 'loada' || name === 'loader' || name === 'payload') {
+    const token = req.query?.t || url.searchParams.get('t');
+    const claim = chainLinks.consume(token, name);
+    if (!claim) return rejectOrTrap(req, res);
+    const run = rebuildRun(baseUrl, claim);
+    if (!run) return res.status(503).send('');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).send(run[name]);
+  }
+
+  if (name === 'sdk') {
+    try {
+      const body = applyChainTokens(readArtifact('sdk'), baseUrl);
+      if (typeof body !== 'string') return res.status(503).send('');
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).send(body);
+    } catch (error) {
+      console.error('[artifact]', error.message);
+      return res.status(404).send('Not Found');
+    }
+  }
+
+  return rejectOrTrap(req, res);
 }
 
-// ═══ /api/verify ═══
+// ═══ /api/verify ═══// ═══ /api/verify ═══
 async function handleVerify(req, res, ip) {
   const xorKey = process.env.PAYLOAD_XOR_KEY || '';
   const { key, hwid, userId, scriptName } = req.body || {};

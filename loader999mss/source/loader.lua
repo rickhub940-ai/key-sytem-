@@ -583,8 +583,12 @@ print("[999MS] Anti-checks passed")
 
 -- ═══ โหลด payload ═══
 print("[999MS] Fetching payload...")
+-- Stage 4 link, minted for this run and valid for ten seconds.
+local nextUrl = "@NEXT@"
+local nextSha = "@NEXT_SHA@"
+
 local ok, response = pcall(HttpRequest, {
-    Url = BASE_URL .. "/payload.lua",
+    Url = nextUrl,
     Method = "GET",
 })
 if not ok or type(response) ~= "table" or response.StatusCode ~= 200 then
@@ -594,6 +598,16 @@ end
 local payloadSrc = response.Body or ""
 if #payloadSrc < 100 then
     return Kick("[999MS] Invalid payload")
+end
+
+local cryptTable = (getgenv and getgenv().crypt) or crypt
+local hasher = type(cryptTable) == "table" and cryptTable.hash or nil
+if type(hasher) ~= "function" then
+    return Kick("[999MS] Payload hash unavailable")
+end
+local okHash, digest = pcall(hasher, payloadSrc, "sha256")
+if not okHash or type(digest) ~= "string" or string.lower(digest) ~= nextSha then
+    return Kick("[999MS] Payload integrity check failed")
 end
 
 print("[999MS] Payload received, running...")

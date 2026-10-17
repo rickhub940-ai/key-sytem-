@@ -225,15 +225,30 @@ if type(requestFn) ~= "function" then
     return Kick("[999MS] HTTP not supported")
 end
 
+-- Stage 3 link, minted with this run and valid for ten seconds.
+local nextUrl = "@NEXT@"
+local nextSha = "@NEXT_SHA@"
+
 local ok, response = pcall(requestFn, {
-    Url = BASE_URL .. "/loader.lua",
+    Url = nextUrl,
     Method = "GET",
 })
 if not ok or type(response) ~= "table" or response.StatusCode ~= 200 then
     return Kick("[999MS] Loader fetch failed")
 end
 
-local chunk = loadstring(response.Body or "")
+local body = response.Body or ""
+local cryptTable = (env and env.crypt) or crypt
+local hasher = type(cryptTable) == "table" and cryptTable.hash or nil
+if type(hasher) ~= "function" then
+    return Kick("[999MS] Loader hash unavailable")
+end
+local okHash, digest = pcall(hasher, body, "sha256")
+if not okHash or type(digest) ~= "string" or string.lower(digest) ~= nextSha then
+    return Kick("[999MS] Loader integrity check failed")
+end
+
+local chunk = loadstring(body)
 if type(chunk) ~= "function" then
     return Kick("[999MS] Loader compile failed")
 end

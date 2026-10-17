@@ -1,12 +1,9 @@
--- 999MS Stage 1 (readable). Builds the Stage-2 capability URL and verifies
--- the Stage-2 body with SHA-256 before it is compiled.
+-- 999MS Stage 1. One freshly minted link per run, valid for 10 seconds.
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local CHAIN_ID = "__CHAIN_ID__"
-local CAP_D = "__CAP_D__"
-local CAP_N = "__CAP_N__"
+local STAGE2_URL = "__STAGE2_URL__"
 local STAGE2_SHA256 = "__STAGE2_SHA256__"
-local BASE_URL = "__BASE_URL__"
 
 local env = (getgenv and getgenv()) or _G
 env.MS999Chain = nil
@@ -17,9 +14,7 @@ env.MS999Chain = {
     UpdatedAt = tick(),
 }
 
-local url = BASE_URL .. "/loada.lua/" .. CAP_D .. "/" .. CAP_N
-
-local okGet, body = pcall(function() return game:HttpGet(url) end)
+local okGet, body = pcall(function() return game:HttpGet(STAGE2_URL) end)
 if not okGet or type(body) ~= "string" or body == "" then
     env.MS999Chain = nil
     error("MS999:S1:E02:HTTP_GET_FAILED", 0)

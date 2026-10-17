@@ -51,7 +51,7 @@ for (const [source, target] of [['loader.lua', 'loader.lua'], ['payload.lua', 'p
 // Stage 1 template keeps its tokens; the handler fills chain id, capability,
 // stage-2 sha and base url at request time.
 const stage1Raw = read('loadc.template.lua');
-for (const token of ['__CHAIN_ID__', '__CAP_D__', '__CAP_N__', '__STAGE2_SHA256__', '__BASE_URL__']) {
+for (const token of ['__CHAIN_ID__', '__STAGE2_URL__', '__STAGE2_SHA256__']) {
   if (!stage1Raw.includes(token)) throw new Error(`loadc template missing ${token}`);
 }
 const stage1 = compact(stage1Raw, 'loadc.template.lua');
