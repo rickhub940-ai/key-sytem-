@@ -162,7 +162,7 @@
       </span>
       <span>Control</span>
     </a>
-    <span class="pill hide-sm"><span class="dot" id="gwDot"></span><span id="gwLabel">gateway —</span></span>
+    <span class="pill hide-sm"><span class="dot" id="gwDot"></span><span id="gwLabel">API —</span></span>
     <span class="pill hide-sm mono" id="clock">—</span>
     <span class="spacer"></span>
     <button class="btn btn-sm" id="refreshBtn" type="button">
@@ -176,14 +176,14 @@
 <main class="wrap">
   <div class="stats">
     <div class="stat">
-      <div class="k">Clients online</div>
+      <div class="k">สถานะ API</div>
       <div class="v" id="statClients">—</div>
-      <div class="s" id="statClientsSub">จาก realtime gateway</div>
+      <div class="s" id="statClientsSub">health check</div>
     </div>
     <div class="stat">
-      <div class="k">Gateway</div>
+      <div class="k">คำขอทั้งหมด</div>
       <div class="v" id="statGateway">—</div>
-      <div class="s" id="statGatewaySub">Render · wss</div>
+      <div class="s" id="statGatewaySub">traffic buffer</div>
     </div>
     <div class="stat">
       <div class="k">Bans</div>
@@ -199,18 +199,6 @@
 
   <div class="grid">
     <div class="stack">
-      <section class="card">
-        <div class="card-h">
-          <h2>Clients ที่เชื่อมต่อ</h2>
-          <span class="pill" id="countPill">0</span>
-          <span class="spacer"></span>
-          <span class="pill hide-sm">จับมือ 2 ขั้น (challenge → response)</span>
-        </div>
-        <div id="sessionsHost">
-          <div class="empty">ยังไม่มีข้อมูล — กดรีเฟรช</div>
-        </div>
-      </section>
-
       <section class="card">
         <div class="card-h"><h2>บันทึกการทำงาน</h2><span class="spacer"></span>
           <button class="btn btn-sm btn-ghost" id="clearLog" type="button">ล้าง</button>
@@ -233,7 +221,7 @@
       <section class="card">
         <div class="card-h"><h2>แบน / ตัดสิทธิ์</h2></div>
         <div class="card-b stack">
-          <p class="hint">แบนมีผลกับ session ที่เริ่มใหม่ทันที ส่วน session ที่ค้างอยู่ให้กด <b>Kick</b> ที่แถวนั้นอีกครั้ง</p>
+          <p class="hint">แบนมีผลทันทีกับคำขอถัดไปของ HWID / user / IP นั้น (ตรวจทุกครั้งใน /api/verify และ /api/script)</p>
           <div>
             <label for="banType">ประเภท</label>
             <select id="banType">
@@ -255,15 +243,6 @@
         </div>
       </section>
 
-      <section class="card">
-        <div class="card-h"><h2>คำสั่งด่วน</h2></div>
-        <div class="card-b stack">
-          <p class="hint">ส่งข้อความถึงทุก client ที่กำลังเชื่อมต่อ</p>
-          <input id="broadcastMsg" placeholder="ข้อความถึงผู้เล่น" maxlength="256" />
-          <button class="btn" id="broadcastBtn" type="button">ส่งถึงทุกคน</button>
-          <button class="btn btn-danger" id="kickAllBtn" type="button">ตัดการเชื่อมต่อทั้งหมด</button>
-        </div>
-      </section>
     </div>
   </div>
 </main>
@@ -274,7 +253,7 @@
 (function () {
   'use strict';
   var KEY = 'ms999_admin_token';
-  var state = { token: sessionStorage.getItem(KEY) || '', sessions: [], timer: null, busy: false };
+  var state = { token: sessionStorage.getItem(KEY) || '', timer: null, busy: false };
 
   var $ = function (id) { return document.getElementById(id); };
   var gate = $('gate'), gateErr = $('gateErr'), gateForm = $('gateForm'), tokenInput = $('token');
@@ -348,7 +327,7 @@
     if (!token) { gateErr.textContent = 'กรุณาใส่ token'; return; }
     $('loginBtn').disabled = true;
     state.token = token;
-    api('/api/control/sessions').then(function (result) {
+    api('/api/control/bans').then(function (result) {
       $('loginBtn').disabled = false;
       if (result.status === 401) {
         state.token = '';
@@ -369,7 +348,6 @@
   $('logoutBtn').addEventListener('click', function () {
     sessionStorage.removeItem(KEY);
     state.token = '';
-    state.sessions = [];
     showGate('');
     gateErr.textContent = '';
   });
@@ -380,17 +358,22 @@
     state.busy = true;
     var icon = $('refreshIcon');
     icon.classList.add('rotate');
-    api('/api/control/sessions').then(function (result) {
-      if (result.status === 401) { showGate('session หมดอายุ กรุณาใส่ token ใหม่'); return; }
+
+    fetch('/api/health', { cache: 'no-store' }).then(function (res) {
+      return res.json().then(function (data) { return { status: res.status, data: data }; });
+    }).then(function (result) {
       var data = result.data || {};
-      renderGateway(data);
-      renderSessions(data.sessions || []);
-      if (!quiet) logLine('โหลดข้อมูลแล้ว · ' + (data.count || 0) + ' client', 'ok');
+      var ok = result.status === 200 && data.ok === true;
+      setDot($('gwDot'), ok ? 'ok' : 'bad');
+      $('gwLabel').textContent = ok ? 'API v' + (data.version || '?') : 'API ออฟไลน์';
+      $('statClients').textContent = ok ? 'ออนไลน์' : 'ออฟไลน์';
+      $('statClientsSub').textContent = ok ? ('service ' + (data.service || '') + ' · chain ' + (data.chain || '')) : 'health check ล้มเหลว';
       $('statUpdated').textContent = new Date().toLocaleTimeString('th-TH').slice(0, 8);
+      if (!quiet) logLine(ok ? 'API ออนไลน์' : 'API ออฟไลน์', ok ? 'ok' : 'err');
     }).catch(function () {
       setDot($('gwDot'), 'bad');
-      $('gwLabel').textContent = 'gateway ออฟไลน์';
-      $('statGateway').textContent = 'ออฟไลน์';
+      $('gwLabel').textContent = 'API ออฟไลน์';
+      $('statClients').textContent = 'ออฟไลน์';
       if (!quiet) logLine('เรียก API ไม่สำเร็จ', 'err');
     }).then(function () {
       state.busy = false;
@@ -399,66 +382,25 @@
 
     api('/api/control/traffic', { limit: 40 }).then(function (result) {
       if (result.status !== 200 || !result.data) return;
+      $('statGateway').textContent = String(result.data.count || 0);
+      $('statGatewaySub').textContent = 'traffic buffer (สูงสุด 200)';
       renderTraffic(result.data.traffic || []);
     }).catch(function () {});
 
     api('/api/control/bans').then(function (result) {
       if (result.status !== 200) return;
       var data = result.data || {};
-      var s = data.stats || { hwids: 0, users: 0, ips: 0 };
-      $('statBans').textContent = (s.hwids + s.users + s.ips);
-      $('statBansSub').textContent = 'hwid ' + s.hwids + ' · user ' + s.users + ' · ip ' + s.ips;
+      var st = data.stats || { hwids: 0, users: 0, ips: 0 };
+      $('statBans').textContent = (st.hwids + st.users + st.ips);
+      $('statBansSub').textContent = 'hwid ' + st.hwids + ' · user ' + st.users + ' · ip ' + st.ips;
       renderBans(data.lists || {});
     }).catch(function () {});
-  }
-
-  function renderGateway(data) {
-    var gw = data.gateway || {};
-    var ok = data.ok && gw.reachable !== false;
-    setDot($('gwDot'), ok ? 'ok' : (gw.reason === 'gateway_timeout' ? 'wait' : 'bad'));
-    $('gwLabel').textContent = ok
-      ? 'gateway v' + (gw.version || '?')
-      : (gw.reason === 'gateway_timeout' ? 'gateway กำลังตื่น…' : 'gateway ออฟไลน์');
-    $('statGateway').textContent = ok ? 'ออนไลน์' : (gw.reason === 'gateway_timeout' ? 'กำลังตื่น' : 'ออฟไลน์');
-    $('statGatewaySub').textContent = gw.uptime != null ? ('uptime ' + dur(gw.uptime * 1000)) : 'Render · wss';
-    $('statClients').textContent = data.count != null ? data.count : 0;
-    $('statClientsSub').textContent = ok ? 'จาก realtime gateway' : (gw.reason || 'ไม่มีข้อมูล');
-    $('countPill').textContent = (data.count || 0) + ' clients';
   }
 
   function esc(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
     });
-  }
-
-  function renderSessions(list) {
-    state.sessions = list;
-    var host = $('sessionsHost');
-    if (!list.length) {
-      host.innerHTML = '<div class="empty">ยังไม่มี client เชื่อมต่ออยู่<br><span style="font-size:.8rem">เมื่อมีคนรัน loader ด้วยคีย์ที่ผ่าน ระบบจะแสดงที่นี่</span></div>';
-      return;
-    }
-    var rows = list.map(function (session) {
-      var jti = String(session.jti || '');
-      var hash = String(session.hwidHash || '');
-      var shortHash = hash ? hash.slice(0, 10) + '…' : '—';
-      return '<tr data-jti="' + esc(jti) + '" data-hash="' + esc(hash) + '">' +
-        '<td><div class="ident"><b>' + esc(jti.slice(0, 8)) + '…' + esc(jti.slice(-4)) + '</b>' +
-          '<span>' + ago(session.connectedAt) + ' · ต่อเนื่อง ' + dur(Date.now() - (session.connectedAt || Date.now())) + '</span></div></td>' +
-        '<td><span class="tag script">' + esc(session.scriptName || '—') + '</span></td>' +
-        '<td class="hide-sm"><div class="ident"><b>' + esc(shortHash) + '</b><span>' + ago(session.lastActivityAt) + '</span></div></td>' +
-        '<td><div class="acts">' +
-          '<button class="btn btn-sm" data-act="notice">Notice</button>' +
-          '<button class="btn btn-sm" data-act="reauth">Reauth</button>' +
-          '<button class="btn btn-sm btn-danger" data-act="disconnect">Kick</button>' +
-          '<button class="btn btn-sm btn-danger" data-act="ban">แบน</button>' +
-        '</div></td>' +
-      '</tr>';
-    }).join('');
-    host.innerHTML = '<div style="overflow:auto"><table><thead><tr>' +
-      '<th>Client</th><th>สคริปต์</th><th class="hide-sm">HWID / ล่าสุด</th><th>การจัดการ</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function statusClass(code) {
@@ -503,57 +445,6 @@
     }).join('');
   }
 
-  /* ── session actions ── */
-  $('sessionsHost').addEventListener('click', function (event) {
-    var btn = event.target.closest('button[data-act]');
-    if (!btn) return;
-    var row = btn.closest('tr');
-    var jti = row.getAttribute('data-jti');
-    var hash = row.getAttribute('data-hash');
-    var act = btn.getAttribute('data-act');
-
-    if (act === 'ban') {
-      if (!hash) { toast('client นี้ไม่มี hwid hash', 'err'); return; }
-      if (!confirm('แบน HWID นี้ถาวรและตัดการเชื่อมต่อ?')) return;
-      api('/api/admin/ban', { type: 'hwidHash', value: hash }).then(function (result) {
-        if (result.status === 200) {
-          toast('แบนแล้ว', 'ok');
-          logLine('แบน HWID ' + hash.slice(0, 12) + '…', 'ok');
-          return api('/api/control/command', { jti: jti, command: 'disconnect', reason: 'banned' });
-        }
-        toast('แบนไม่สำเร็จ', 'err');
-      }).then(function () { loadAll(true); })
-        .catch(function () { toast('เรียกเซิร์ฟเวอร์ไม่ได้', 'err'); });
-      return;
-    }
-
-    var payload = { jti: jti, command: act };
-    if (act === 'notice') {
-      var text = prompt('ข้อความถึง client นี้ (ไม่เกิน 256 ตัวอักษร):', '');
-      if (text === null) return;
-      payload.message = text.slice(0, 256);
-    }
-    if (act === 'disconnect') {
-      if (!confirm('ตัดการเชื่อมต่อ client นี้?')) return;
-      payload.reason = 'admin disconnect';
-    }
-    btn.disabled = true;
-    api('/api/control/command', payload).then(function (result) {
-      btn.disabled = false;
-      if (result.status === 200 && result.data && result.data.ok) {
-        toast(act + ' ส่งแล้ว', 'ok');
-        logLine(act + ' → ' + jti.slice(0, 8) + '…', 'ok');
-      } else {
-        toast('ส่งคำสั่งไม่สำเร็จ', 'err');
-        logLine(act + ' ล้มเหลว', 'err');
-      }
-      setTimeout(function () { loadAll(true); }, 800);
-    }).catch(function () {
-      btn.disabled = false;
-      toast('เรียกเซิร์ฟเวอร์ไม่ได้', 'err');
-    });
-  });
-
   /* ── manual ban form ── */
   $('banBtn').addEventListener('click', function () {
     var type = $('banType').value;
@@ -571,37 +462,6 @@
     }).catch(function () { toast('เรียกเซิร์ฟเวอร์ไม่ได้', 'err'); });
   });
 
-  /* ── broadcast ── */
-  function forEachSession(fn) {
-    return state.sessions.reduce(function (chain, session) {
-      return chain.then(function () { return fn(session); });
-    }, Promise.resolve());
-  }
-
-  $('broadcastBtn').addEventListener('click', function () {
-    var text = $('broadcastMsg').value.trim();
-    if (!text) { toast('พิมพ์ข้อความก่อน', 'err'); return; }
-    if (!state.sessions.length) { toast('ยังไม่มี client', 'err'); return; }
-    forEachSession(function (session) {
-      return api('/api/control/command', { jti: session.jti, command: 'notice', message: text });
-    }).then(function () {
-      toast('ส่งถึง ' + state.sessions.length + ' client', 'ok');
-      logLine('broadcast → ' + state.sessions.length + ' client', 'ok');
-    }).catch(function () { toast('ส่งไม่ครบ', 'err'); });
-  });
-
-  $('kickAllBtn').addEventListener('click', function () {
-    if (!state.sessions.length) { toast('ยังไม่มี client', 'err'); return; }
-    if (!confirm('ตัดการเชื่อมต่อ ' + state.sessions.length + ' client ทั้งหมด?')) return;
-    forEachSession(function (session) {
-      return api('/api/control/command', { jti: session.jti, command: 'disconnect', reason: 'admin kick all' });
-    }).then(function () {
-      toast('ตัดการเชื่อมต่อทั้งหมดแล้ว', 'ok');
-      logLine('kick all → ' + state.sessions.length + ' client', 'ok');
-      setTimeout(function () { loadAll(true); }, 800);
-    }).catch(function () { toast('ทำไม่ครบ', 'err'); });
-  });
-
   $('refreshBtn').addEventListener('click', function () { loadAll(false); });
   $('clearLog').addEventListener('click', function () { $('log').innerHTML = ''; });
   $('clock').textContent = new Date().toLocaleDateString('th-TH');
@@ -611,7 +471,7 @@
 
   /* ── boot ── */
   if (state.token) {
-    api('/api/control/sessions').then(function (result) {
+    api('/api/control/bans').then(function (result) {
       if (result.status === 200) {
         gate.classList.add('hide');
         loadAll(true);

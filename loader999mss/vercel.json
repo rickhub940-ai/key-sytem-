@@ -19,14 +19,6 @@
       "dest": "/api/auth?action=health"
     },
     {
-      "src": "/api/control/sessions",
-      "dest": "/api/auth?action=control-sessions"
-    },
-    {
-      "src": "/api/control/command",
-      "dest": "/api/auth?action=control-command"
-    },
-    {
       "src": "/api/control/bans",
       "dest": "/api/auth?action=control-bans"
     },
@@ -69,22 +61,6 @@
     {
       "src": "/api/heartbeat",
       "dest": "/api/auth?action=heartbeat"
-    },
-    {
-      "src": "/api/realtime-ticket",
-      "dest": "/api/auth?action=realtime-ticket"
-    },
-    {
-      "src": "/api/realtime/sessions",
-      "dest": "/api/auth?action=realtime-sessions"
-    },
-    {
-      "src": "/api/realtime/command",
-      "dest": "/api/auth?action=realtime-command"
-    },
-    {
-      "src": "/admin",
-      "dest": "/api/auth?action=dashboard"
     },
     {
       "src": "/api/start",

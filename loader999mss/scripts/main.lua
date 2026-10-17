@@ -152,68 +152,6 @@ if not decoded or decoded.valid ~= true then
     end
     return Kick("[999MS] " .. diagnostic)
 end
-
-local function startRealtime()
-    local z = false
-    local l = os.clock()
-    task.delay(10, function()
-        if not z then Kick("[999MS] Realtime connection timeout") end
-    end)
-    local h = getHWID()
-    local ok1, rs = pcall(req, {
-        Url = BASE_URL .. "/api/realtime-ticket",
-        Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
-        Body = HttpService:JSONEncode({ ticket = Ticket, hwid = h, scriptName = ExpectedScript }),
-    })
-    if not ok1 or type(rs) ~= "table" then return end
-    local c
-    pcall(function() c = HttpService:JSONDecode(rs.Body) end)
-    if type(c) ~= "table" or c.valid ~= true or type(c.url) ~= "string" or type(c.token) ~= "string" then return end
-    local a = type(syn) == "table" and type(syn.websocket) == "table" and syn.websocket.connect or nil
-    local b = type(WebSocket) == "table" and WebSocket.connect or nil
-    local d = type(websocket) == "table" and websocket.connect or nil
-    local f = type(a) == "function" and a or type(b) == "function" and b or type(d) == "function" and d
-    if type(f) ~= "function" then return end
-    local ok2, s = pcall(f, c.url)
-    if not ok2 or s == nil then return end
-    local function send(v)
-        local e = HttpService:JSONEncode(v)
-        if type(s.Send) == "function" then return pcall(function() s:Send(e) end) end
-        if type(s.send) == "function" then return pcall(s.send, e) end
-        return false
-    end
-    if not send({ type = "authenticate", token = c.token, hwid = h, scriptName = ExpectedScript }) then return end
-    local q = s.OnMessage or s.MessageReceived
-    if type(q) == "table" and type(q.Connect) == "function" then
-        q:Connect(function(v)
-            local m
-            pcall(function() m = HttpService:JSONDecode(v) end)
-            if type(m) ~= "table" then return end
-            l = os.clock()
-            if m.type == "handshake_challenge" and type(m.id) == "string" and type(m.challenge) == "string" then
-                send({ type = "handshake_response", id = m.id, challenge = m.challenge })
-            elseif m.type == "authenticated" then
-                z = true
-            elseif m.type == "command" and m.command == "disconnect" then
-                Kick("[999MS] " .. tostring(m.reason or "Session ended"))
-            elseif m.type == "command" and m.command == "reauth" then
-                Kick("[999MS] Reauthentication required")
-            end
-        end)
-    end
-    task.spawn(function()
-        while s do
-            task.wait(5)
-            if not z or os.clock() - l >= 10 then return Kick("[999MS] Realtime connection timeout") end
-            if not send({ type = "heartbeat" }) then return Kick("[999MS] Realtime connection lost") end
-            if not send({ type = "status", stage = "script", code = "active" }) then return Kick("[999MS] Realtime connection lost") end
-        end
-    end)
-end
-
-pcall(startRealtime)
-
 if ChainEnv.MS999Chain == Chain then
     ChainEnv.MS999Chain = nil
 end

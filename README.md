@@ -5,8 +5,9 @@
 | โฟลเดอร์ | ใช้ที่ไหน | บริการ |
 |---|---|---|
 | `loader999mss/` | Vercel | เว็บ + API + แผงควบคุม |
-| `render-package/` | Render | realtime WebSocket gateway |
 | `loader999mss-source-no-obf-txt.zip` | — | ทั้งโปรเจกต์ (มี `artifacts/` ครบ ต่างจาก zip เดิมที่ตัดออก) |
+
+> ไม่มี realtime / WebSocket แล้ว — ถอด gateway ออกทั้งหมด (17 ต.ค. 2026)
 
 ## deploy
 
@@ -14,8 +15,6 @@
 # Vercel
 cd loader999mss && npx vercel deploy --prod
 
-# Render (WebSocket gateway)
-cd render-package && npm ci && npm start   # or push to the Render-connected repo
 ```
 
 ## build chain (Lua)
@@ -29,6 +28,4 @@ npm test
 ## URLs
 
 - https://loader999mss.vercel.app — landing + API
-- https://loader999mss.vercel.app/control — แผงควบคุม client (ADMIN_TOKEN)
-- https://loader999mss.vercel.app/admin — realtime dashboard
-- wss://loader999mss-realtime.onrender.com/realtime — gateway
+- https://loader999mss.vercel.app/control — แผงควบคุม (ADMIN_TOKEN): health / bans / traffic

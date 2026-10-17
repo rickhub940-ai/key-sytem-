@@ -357,7 +357,6 @@
           <div class="kv"><span>สถานะ</span><b id="stState">กำลังตรวจสอบ…</b></div>
           <div class="kv"><span>เวอร์ชัน</span><b id="stVersion">—</b></div>
           <div class="kv"><span>Stage chain</span><b id="stChain">—</b></div>
-          <div class="kv"><span>Realtime gateway</span><b id="stRealtime">—</b></div>
           <div class="kv"><span>ตรวจล่าสุด</span><b id="stChecked">—</b></div>
         </div>
         <div style="display:flex;flex-direction:column;gap:12px;justify-content:center">
@@ -492,7 +491,6 @@
   var stateEl = document.getElementById('stState');
   var versionEl = document.getElementById('stVersion');
   var chainEl = document.getElementById('stChain');
-  var realtimeEl = document.getElementById('stRealtime');
   var checkedEl = document.getElementById('stChecked');
   var heroStatus = document.getElementById('heroStatus');
 
@@ -522,7 +520,6 @@
         if (stateEl) stateEl.textContent = 'ออนไลน์';
         if (versionEl) versionEl.textContent = 'v' + (data.version || '—');
         if (chainEl) chainEl.textContent = data.chain || '—';
-        if (realtimeEl) realtimeEl.textContent = data.realtime ? 'เชื่อมต่อแล้ว' : 'ยังไม่ตั้งค่า';
         if (checkedEl) checkedEl.textContent = new Date().toLocaleTimeString('th-TH');
         if (heroStatus) heroStatus.textContent = 'ระบบออนไลน์ · ' + ms + ' ms';
         setDot(dot, 'ok');
@@ -582,3 +579,5 @@
 </script>
 </body>
 </html>
+
+<!-- deploy trigger: 2026-10-17T08:46:43Z -->

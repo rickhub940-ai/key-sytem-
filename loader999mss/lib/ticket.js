@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 
 const TICKET_TTL = 30 * 60;
+const SESSION_TTL = 24 * 60 * 60;
 
 function b64url(buf) {
   return Buffer.from(buf).toString('base64')
