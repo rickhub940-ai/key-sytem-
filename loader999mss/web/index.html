@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>999MS — Key System &amp; Loader</title>
+<meta name="description" content="999MS — ระบบคีย์และตัวโหลดสำหรับ Roblox: ผูก HWID, ออก ticket อายุสั้น, โหลดสคริปต์แบบหลายชั้นพร้อมตรวจ SHA-256 ทุกครั้ง" />
+<meta name="theme-color" content="#05060b" />
+<meta property="og:title" content="999MS — Key System &amp; Loader" />
+<meta property="og:description" content="คีย์เดียว ปลดล็อกทุกสคริปต์ — ตรวจ HWID, ticket อายุสั้น, stage chain ตรวจ SHA-256" />
+<meta property="og:type" content="website" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2338d6ff'/%3E%3Cstop offset='.55' stop-color='%238b7bff'/%3E%3Cstop offset='1' stop-color='%233ee6b0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='16' fill='%230a0c14'/%3E%3Cpath d='M20 42c6-10 10-14 14-20M24 22h16v6h-7l7 14h-6l-4-8-5 8h-6l9-14h-4z' fill='url(%23g)'/%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bg:#05060b;
+    --bg-2:#080a12;
+    --panel:rgba(255,255,255,.035);
+    --panel-2:rgba(255,255,255,.055);
+    --line:rgba(255,255,255,.085);
+    --line-2:rgba(255,255,255,.14);
+    --text:#e9ecf7;
+    --muted:#8b93ad;
+    --cyan:#38d6ff;
+    --violet:#8b7bff;
+    --mint:#3ee6b0;
+    --danger:#ff6b81;
+    --grad:linear-gradient(100deg,var(--cyan),var(--violet) 55%,var(--mint));
+    --radius:18px;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Noto Sans Thai","Leelawadee UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.65;overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:-20% -10% auto -10%;height:70vh;z-index:-2;
+    background:
+      radial-gradient(42% 55% at 18% 20%, rgba(56,214,255,.16), transparent 70%),
+      radial-gradient(40% 60% at 82% 8%, rgba(139,123,255,.16), transparent 70%),
+      radial-gradient(35% 45% at 55% 45%, rgba(62,230,176,.09), transparent 70%);
+    filter:blur(12px);animation:drift 22s ease-in-out infinite alternate;
+  }
+  body::after{
+    content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.35;
+    background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);
+    background-size:64px 64px;
+    mask-image:radial-gradient(80% 60% at 50% 0%,#000 20%,transparent 80%);
+    -webkit-mask-image:radial-gradient(80% 60% at 50% 0%,#000 20%,transparent 80%);
+  }
+  @keyframes drift{from{transform:translate3d(-2%,-1%,0) scale(1)}to{transform:translate3d(3%,2%,0) scale(1.08)}}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(62,230,176,.45)}50%{box-shadow:0 0 0 6px rgba(62,230,176,0)}}
+
+  a{color:inherit;text-decoration:none}
+  .wrap{width:min(1120px,92vw);margin-inline:auto}
+  .mono{font-family:var(--mono)}
+  .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+  /* ── nav ── */
+  header{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);background:rgba(5,6,11,.62);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;gap:18px;height:68px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.3px}
+  .mark{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:linear-gradient(160deg,rgba(56,214,255,.22),rgba(139,123,255,.22));border:1px solid var(--line-2)}
+  .mark svg{width:20px;height:20px}
+  .nav nav{display:flex;gap:26px;margin-left:auto;font-size:.94rem;color:var(--muted)}
+  .nav nav a{transition:color .2s}
+  .nav nav a:hover{color:var(--text)}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:9px;
+    padding:11px 20px;border-radius:12px;border:1px solid var(--line-2);
+    font:inherit;font-weight:600;font-size:.94rem;cursor:pointer;
+    background:var(--panel);color:var(--text);transition:transform .15s ease,border-color .2s,background .2s;
+    white-space:nowrap;
+  }
+  .btn:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.28);background:var(--panel-2)}
+  .btn-primary{
+    border:0;background:var(--grad);color:#04060d;
+    box-shadow:0 10px 30px -12px rgba(88,150,255,.9);
+  }
+  .btn-primary:hover{filter:brightness(1.06)}
+  .btn-ghost{background:transparent}
+  .nav .btn{padding:9px 16px}
+
+  /* ── hero ── */
+  .hero{padding:88px 0 56px;display:grid;grid-template-columns:1.05fr .95fr;gap:54px;align-items:center}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:9px;font-size:.78rem;letter-spacing:.16em;
+    text-transform:uppercase;color:#b9c2dc;border:1px solid var(--line-2);
+    background:rgba(255,255,255,.03);padding:7px 13px;border-radius:999px;
+  }
+  .eyebrow i{width:7px;height:7px;border-radius:50%;background:var(--mint);animation:pulse 2.4s infinite}
+  h1{font-size:clamp(2.2rem,4.6vw,3.6rem);line-height:1.18;margin:22px 0 18px;letter-spacing:-.02em;font-weight:800}
+  .lede{color:var(--muted);font-size:1.06rem;max-width:52ch;margin:0 0 30px}
+  .hero-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  .status-line{display:flex;align-items:center;gap:9px;margin-top:22px;font-size:.9rem;color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;background:#5c6478;box-shadow:0 0 0 0 rgba(62,230,176,.45)}
+  .dot.ok{background:var(--mint);animation:pulse 2.4s infinite}
+  .dot.bad{background:var(--danger)}
+
+  /* code card */
+  .code-card{
+    background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));
+    border:1px solid var(--line-2);border-radius:var(--radius);overflow:hidden;
+    box-shadow:0 30px 80px -40px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.06);
+    transform:perspective(1200px) rotateY(-4deg) rotateX(2deg);
+  }
+  .code-top{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);background:rgba(0,0,0,.25)}
+  .tl{width:10px;height:10px;border-radius:50%}
+  .tl:nth-child(1){background:#ff5f57}.tl:nth-child(2){background:#febc2e}.tl:nth-child(3){background:#28c840}
+  .code-name{margin-left:8px;font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+  .code-body{padding:22px 18px;font-family:var(--mono);font-size:.9rem;line-height:1.7;overflow-x:auto}
+  .code-body .c{color:#5a6480}
+  .code-body .f{color:var(--cyan)}
+  .code-body .s{color:var(--mint)}
+  .code-body .p{color:#c9d3ee}
+  .copy-row{display:flex;gap:10px;padding:0 16px 16px}
+  .copy-row .btn{flex:1;justify-content:center}
+  .copied{color:var(--mint)!important;border-color:rgba(62,230,176,.45)!important}
+
+  /* stats */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0 8px}
+  .stat{border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:18px}
+  .stat b{display:block;font-size:1.02rem;letter-spacing:-.01em}
+  .stat span{color:var(--muted);font-size:.83rem}
+
+  /* sections */
+  section{padding:76px 0}
+  .sec-head{max-width:62ch;margin-bottom:34px}
+  .kicker{font-family:var(--mono);font-size:.76rem;letter-spacing:.2em;text-transform:uppercase;color:var(--cyan);margin:0 0 10px}
+  h2{font-size:clamp(1.5rem,2.6vw,2.1rem);margin:0 0 12px;letter-spacing:-.02em}
+  .sec-head p{color:var(--muted);margin:0}
+
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .step{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:24px;position:relative;overflow:hidden}
+  .step::after{content:"";position:absolute;inset:0 auto auto 0;height:2px;width:100%;background:var(--grad);opacity:.55}
+  .step .n{font-family:var(--mono);font-size:.78rem;color:var(--cyan);letter-spacing:.16em}
+  .step h3{margin:12px 0 8px;font-size:1.06rem}
+  .step p{margin:0;color:var(--muted);font-size:.93rem}
+
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:24px;transition:border-color .25s,transform .25s,background .25s}
+  .card:hover{border-color:var(--line-2);transform:translateY(-2px);background:var(--panel-2)}
+  .ico{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:rgba(56,214,255,.1);border:1px solid rgba(56,214,255,.22);margin-bottom:14px}
+  .ico svg{width:19px;height:19px;stroke:var(--cyan);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .card h3{margin:0 0 7px;font-size:1rem}
+  .card p{margin:0;color:var(--muted);font-size:.92rem}
+
+  /* status panel */
+  .panel{border:1px solid var(--line-2);border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.015));padding:26px;display:grid;grid-template-columns:1.1fr .9fr;gap:26px}
+  .kv{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px dashed var(--line);font-size:.93rem}
+  .kv:last-child{border-bottom:0}
+  .kv span{color:var(--muted)}
+  .kv b{font-family:var(--mono);font-weight:500}
+  .ping{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+  .ping .big{font-family:var(--mono);font-size:2rem;letter-spacing:-.03em}
+  .ping small{color:var(--muted);display:block;font-size:.8rem}
+  .refresh{align-self:flex-start}
+
+  /* faq */
+  .faq{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
+  details{border-bottom:1px solid var(--line)}
+  details:last-child{border-bottom:0}
+  summary{cursor:pointer;padding:18px 22px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:16px;align-items:center}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";font-family:var(--mono);color:var(--cyan);font-size:1.15rem;transition:transform .2s}
+  details[open] summary::after{transform:rotate(45deg)}
+  details p{margin:0;padding:0 22px 20px;color:var(--muted);font-size:.94rem;max-width:80ch}
+
+  /* cta */
+  .cta{border:1px solid var(--line-2);border-radius:24px;padding:44px;text-align:center;background:radial-gradient(70% 130% at 50% 0%,rgba(139,123,255,.16),transparent 70%),var(--panel)}
+  .cta h2{margin-bottom:10px}
+  .cta p{color:var(--muted);margin:0 auto 24px;max-width:60ch}
+  .cta .hero-actions{justify-content:center}
+
+  footer{border-top:1px solid var(--line);padding:30px 0 44px;color:var(--muted);font-size:.86rem}
+  .foot{display:flex;flex-wrap:wrap;gap:16px;justify-content:space-between;align-items:center}
+  .foot a:hover{color:var(--text)}
+  .disclaimer{margin-top:14px;color:#6d7590;font-size:.8rem;max-width:80ch}
+
+  /* reveal */
+  .reveal{opacity:0;transform:translateY(14px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.3,1)}
+  .reveal.in{opacity:1;transform:none}
+
+  @media(max-width:960px){
+    .hero{grid-template-columns:1fr;padding-top:56px}
+    .code-card{transform:none}
+    .steps,.cards{grid-template-columns:1fr 1fr}
+    .panel{grid-template-columns:1fr}
+    .stats{grid-template-columns:1fr 1fr}
+    .nav nav{display:none}
+  }
+  @media(max-width:620px){
+    .steps,.cards{grid-template-columns:1fr}
+    .cta{padding:30px 20px}
+    .hero{padding-bottom:20px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+    .reveal{opacity:1;transform:none}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top" aria-label="999MS home">
+      <span class="mark">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#38d6ff"/><stop offset=".6" stop-color="#8b7bff"/><stop offset="1" stop-color="#3ee6b0"/></linearGradient></defs><path d="M5 19c3.6-6.2 6.2-9.6 9-14M8 5h9v3.4h-4.2L18 19h-3.6l-2.2-4.6L8.6 19H5l4.6-7.2H6.4z" fill="url(#lg)"/></svg>
+      </span>
+      <span>999<span class="grad">MS</span></span>
+    </a>
+    <nav aria-label="หลัก">
+      <a href="#how">วิธีใช้</a>
+      <a href="#features">ฟีเจอร์</a>
+      <a href="#status">สถานะ</a>
+      <a href="#faq">คำถามบ่อย</a>
+    </nav>
+    <button class="btn btn-primary" id="copyNav" type="button">คัดลอกสคริปต์</button>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <div>
+      <span class="eyebrow"><i></i> Key system · Loader · v2.1</span>
+      <h1>คีย์เดียว <span class="grad">ปลดล็อกทุกสคริปต์</span></h1>
+      <p class="lede">
+        999MS ตรวจคีย์ผ่าน Platoboost แล้วผูกกับ HWID ของเครื่อง ออก ticket อายุ 30 นาที
+        และโหลดสคริปต์เป็นทอด ๆ โดยตรวจ SHA-256 ของทุก stage ก่อนรัน
+      </p>
+      <div class="hero-actions">
+        <button class="btn btn-primary" id="copyHero" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          คัดลอก loadstring
+        </button>
+        <a class="btn btn-ghost" href="#how">ดูวิธีใช้งาน</a>
+      </div>
+      <div class="status-line">
+        <span class="dot" id="heroDot"></span>
+        <span id="heroStatus">กำลังตรวจสอบสถานะระบบ…</span>
+      </div>
+    </div>
+
+    <div class="code-card">
+      <div class="code-top">
+        <span class="tl"></span><span class="tl"></span><span class="tl"></span>
+        <span class="code-name">loadstring.lua</span>
+      </div>
+      <div class="code-body">
+<span class="c">-- วางใน executor แล้วกด Execute</span><br />
+<span class="p">loadstring(</span><span class="f">game:HttpGet</span>(<span class="s" id="scriptUrl">"https://loader999mss.vercel.app/loadc.lua"</span><span class="p">))()</span>
+      </div>
+      <div class="copy-row">
+        <button class="btn" id="copyCard" type="button">คัดลอกโค้ด</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="stats reveal">
+      <div class="stat"><b>HMAC-SHA256</b><span>ticket ลงนามทุกใบ</span></div>
+      <div class="stat"><b>30 นาที</b><span>อายุ ticket</span></div>
+      <div class="stat"><b>&lt; 60 วิ</b><span>อายุ runtime proof</span></div>
+      <div class="stat"><b>SHA-256 pinned</b><span>ตรวจทุก stage ก่อนรัน</span></div>
+    </div>
+  </div>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="kicker">Getting started</p>
+        <h2>ใช้งานใน 3 ขั้นตอน</h2>
+        <p>ไม่ต้องติดตั้งอะไรเพิ่ม ใช้ executor ที่รองรับ <span class="mono">game:HttpGet</span> และ <span class="mono">loadstring</span></p>
+      </div>
+      <div class="steps">
+        <article class="step reveal">
+          <div class="n">STEP 01</div>
+          <h3>เปิด executor แล้วรัน loadstring</h3>
+          <p>คัดลอกโค้ดด้านบนไปวางใน executor ระบบจะดึง stage 1 มาให้อัตโนมัติ</p>
+        </article>
+        <article class="step reveal">
+          <div class="n">STEP 02</div>
+          <h3>รับคีย์จากหน้า Platoboost</h3>
+          <p>ตัวโหลดจะพาไปหน้าแลกคีย์ คีย์จะผูกกับ HWID ของเครื่องคุณทันทีที่ยืนยัน</p>
+        </article>
+        <article class="step reveal">
+          <div class="n">STEP 03</div>
+          <h3>วางคีย์แล้วรอโหลด</h3>
+          <p>หลังคีย์ผ่าน ระบบจะดาวน์โหลดสคริปต์และตรวจสอบก่อนรัน — เสร็จแล้วใช้งานได้เลย</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="kicker">Under the hood</p>
+        <h2>ระบบป้องกันที่ทำงานเบื้องหลัง</h2>
+        <p>ทุกอย่างตรวจฝั่งเซิร์ฟเวอร์ ไม่ได้เชื่อสิ่งที่ client ส่งมาเพียงอย่างเดียว</p>
+      </div>
+      <div class="cards">
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+          <h3>ผูกกับ HWID</h3>
+          <p>คีย์หนึ่งใบใช้ได้กับเครื่องเดียว ticket ถูกผูกกับ hash ของ HWID ตั้งแต่ตอนตรวจคีย์</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v6"/><path d="M5 9h14"/><path d="M7 9v5a5 5 0 0 0 10 0V9"/><path d="M9 21h6"/></svg></div>
+          <h3>Ticket อายุสั้น</h3>
+          <p>ลงนามด้วย HMAC-SHA256 หมดอายุใน 30 นาที และมี runtime proof แยกที่อายุไม่เกิน 60 วินาที</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h7"/><circle cx="18" cy="16" r="3"/></svg></div>
+          <h3>Stage chain หลายชั้น</h3>
+          <p>แต่ละทอดมี capability เฉพาะ ออกใหม่ทุกครั้งและใช้ได้ครั้งเดียวภายใน 20 วินาที</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9.5 12l1.8 1.8L15 10"/></svg></div>
+          <h3>ตรวจความถูกต้องของไฟล์</h3>
+          <p>ไฟล์ stage 2 ถูก pin ด้วย SHA-256 ไว้ในตัวเซิร์ฟเวอร์ ถ้าเนื้อหาเปลี่ยนจะไม่ยอมรัน</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 4 12L16 12h5"/></svg></div>
+          <h3>Heartbeat ระหว่างเล่น</h3>
+          <p>เซิร์ฟเวอร์ตรวจ session เป็นระยะ ถ้าถูกแบนหรือแก้สคริปต์ระหว่างทางจะตัดการเชื่อมต่อ</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg></div>
+          <h3>รหัส diagnostic</h3>
+          <p>ถ้าถูกปฏิเสธ ระบบแสดงรหัสอย่าง <span class="mono">D2_HWID_MISMATCH</span> เพื่อแจ้งทีมซัพพอร์ตได้ตรงจุด</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="status">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="kicker">Live status</p>
+        <h2>สถานะระบบ</h2>
+        <p>ตรวจจาก endpoint จริงของเซิร์ฟเวอร์นี้ ไม่ใช่ข้อความที่พิมพ์ไว้</p>
+      </div>
+      <div class="panel reveal">
+        <div>
+          <div class="ping">
+            <span class="dot" id="panelDot"></span>
+            <div>
+              <div class="big" id="latency">—</div>
+              <small>เวลาตอบสนอง API</small>
+            </div>
+          </div>
+          <div class="kv"><span>สถานะ</span><b id="stState">กำลังตรวจสอบ…</b></div>
+          <div class="kv"><span>เวอร์ชัน</span><b id="stVersion">—</b></div>
+          <div class="kv"><span>Stage chain</span><b id="stChain">—</b></div>
+          <div class="kv"><span>Realtime gateway</span><b id="stRealtime">—</b></div>
+          <div class="kv"><span>ตรวจล่าสุด</span><b id="stChecked">—</b></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;justify-content:center">
+          <p style="margin:0;color:var(--muted);font-size:.93rem">
+            หน้านี้เรียก <span class="mono">/api/health</span> แบบไม่ส่งข้อมูลใด ๆ ต่อเซิร์ฟเวอร์
+            เพื่อวัดว่า API ตอบสนองหรือไม่
+          </p>
+          <button class="btn refresh" id="refresh" type="button">ตรวจอีกครั้ง</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <p class="kicker">FAQ</p>
+        <h2>คำถามที่พบบ่อย</h2>
+      </div>
+      <div class="faq reveal">
+        <details>
+          <summary>คีย์ใช้กับเครื่องอื่นได้ไหม</summary>
+          <p>ไม่ได้ คีย์ถูกผูกกับ HWID ตั้งแต่ตอนยืนยัน ถ้าเปลี่ยนเครื่องหรือเปลี่ยนอุปกรณ์ ให้ติดต่อทีมซัพพอร์ตเพื่อรีเซ็ตการผูก</p>
+        </details>
+        <details>
+          <summary>ขึ้นว่า HWID mismatch ต้องทำอย่างไร</summary>
+          <p>แปลว่าระบบตรวจพบว่าคีย์นี้ผูกกับเครื่องอื่น หรือตัว executor รายงานค่า HWID ไม่คงที่ ลองรีสตาร์ท executor แล้วรันใหม่ หากยังขึ้นอยู่ให้ติดต่อซัพพอร์ตพร้อมรหัส diagnostic</p>
+        </details>
+        <details>
+          <summary>ทำไมต้องรันผ่าน loadc.lua เท่านั้น</summary>
+          <p>เพราะสคริปต์หลักถูกล็อกกับ chain <span class="mono">loadc → loada → loader → payload</span> การข้ามขั้นจะทำให้การตรวจสอบ state ล้มเหลวและถูกตัดการทำงาน</p>
+        </details>
+        <details>
+          <summary>ระบบเก็บข้อมูลอะไรบ้าง</summary>
+          <p>เซิร์ฟเวอร์เก็บเฉพาะ hash ของ HWID, หมายเลข ticket และสถานะ session ที่มีอายุสั้น ไม่ได้เก็บคีย์หรือข้อมูลส่วนตัวแบบถาวร</p>
+        </details>
+        <details>
+          <summary>รองรับ executor ตัวไหนบ้าง</summary>
+          <p>ต้องรองรับ <span class="mono">game:HttpGet</span>, <span class="mono">loadstring</span> และ <span class="mono">request/syn.request</span> ขึ้นไป ถ้าไม่รองรับ ตัวโหลดจะแจ้งรหัส <span class="mono">MS999:S1:E04</span></p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="cta reveal">
+        <h2>พร้อมเริ่มแล้วหรือยัง</h2>
+        <p>คัดลอก loadstring ไปวางใน executor แล้วทำตามขั้นตอน ระบบจะพาไปแลกคีย์เอง</p>
+        <div class="hero-actions">
+          <button class="btn btn-primary" id="copyCta" type="button">คัดลอก loadstring</button>
+          <a class="btn btn-ghost" href="#how">อ่านวิธีใช้</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <span>© 2026 999MS · Key system &amp; loader</span>
+      <span style="display:flex;gap:18px">
+        <a href="#status">สถานะ</a>
+        <a href="#faq">คำถามบ่อย</a>
+        <a href="/control">Control</a>
+        <a href="https://yura.lol/09ms" rel="noopener">Discord</a>
+      </span>
+    </div>
+    <p class="disclaimer">
+      999MS ไม่ได้มีความเกี่ยวข้องกับ Roblox Corporation หรือผู้พัฒนาเกมใด ๆ การใช้สคริปต์อัตโนมัติอาจผิดข้อกำหนดการใช้งานของเกม
+      ผู้ใช้รับผิดชอบความเสี่ยงด้วยตนเอง
+    </p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  var FALLBACK_HOST = 'loader999mss.vercel.app';
+  var host = location.host && location.host.indexOf('localhost') !== 0 && location.host !== ''
+    ? location.host
+    : FALLBACK_HOST;
+  var url = 'https://' + host + '/loadc.lua';
+  var command = 'loadstring(game:HttpGet("' + url + '"))()';
+
+  var scriptUrlEl = document.getElementById('scriptUrl');
+  if (scriptUrlEl) scriptUrlEl.textContent = '"' + url + '"';
+
+  function flash(btn) {
+    if (!btn) return;
+    var original = btn.getAttribute('data-label') || btn.textContent;
+    btn.setAttribute('data-label', original);
+    btn.classList.add('copied');
+    btn.textContent = 'คัดลอกแล้ว ✓';
+    clearTimeout(btn._t);
+    btn._t = setTimeout(function () {
+      btn.classList.remove('copied');
+      btn.textContent = original;
+    }, 1600);
+  }
+
+  function copy(text, btn) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { flash(btn); }, function () { legacy(text, btn); });
+      return;
+    }
+    legacy(text, btn);
+  }
+
+  function legacy(text, btn) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); flash(btn); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  ['copyNav', 'copyHero', 'copyCard', 'copyCta'].forEach(function (id) {
+    var btn = document.getElementById(id);
+    if (btn) btn.addEventListener('click', function () { copy(command, btn); });
+  });
+
+  var dot = document.getElementById('panelDot');
+  var heroDot = document.getElementById('heroDot');
+  var latencyEl = document.getElementById('latency');
+  var stateEl = document.getElementById('stState');
+  var versionEl = document.getElementById('stVersion');
+  var chainEl = document.getElementById('stChain');
+  var realtimeEl = document.getElementById('stRealtime');
+  var checkedEl = document.getElementById('stChecked');
+  var heroStatus = document.getElementById('heroStatus');
+
+  function setDot(el, cls) {
+    if (!el) return;
+    el.classList.remove('ok', 'bad');
+    if (cls) el.classList.add(cls);
+  }
+
+  function check() {
+    var started = Date.now();
+    if (stateEl) stateEl.textContent = 'กำลังตรวจสอบ…';
+    setDot(dot, '');
+    setDot(heroDot, '');
+
+    var controller = window.AbortController ? new AbortController() : null;
+    var timer = controller ? setTimeout(function () { controller.abort(); }, 8000) : null;
+
+    fetch('/api/health', { cache: 'no-store', signal: controller ? controller.signal : undefined })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        var ms = Date.now() - started;
+        if (latencyEl) latencyEl.textContent = ms + ' ms';
+        if (stateEl) stateEl.textContent = 'ออนไลน์';
+        if (versionEl) versionEl.textContent = 'v' + (data.version || '—');
+        if (chainEl) chainEl.textContent = data.chain || '—';
+        if (realtimeEl) realtimeEl.textContent = data.realtime ? 'เชื่อมต่อแล้ว' : 'ยังไม่ตั้งค่า';
+        if (checkedEl) checkedEl.textContent = new Date().toLocaleTimeString('th-TH');
+        if (heroStatus) heroStatus.textContent = 'ระบบออนไลน์ · ' + ms + ' ms';
+        setDot(dot, 'ok');
+        setDot(heroDot, 'ok');
+      })
+      .catch(function () {
+        var offlinePreview = !/^https?:$/.test(location.protocol) || !location.host;
+        if (latencyEl) latencyEl.textContent = '—';
+        if (stateEl) stateEl.textContent = offlinePreview ? 'ตรวจสอบได้บนเว็บจริง' : 'ติดต่อไม่ได้';
+        if (checkedEl) checkedEl.textContent = new Date().toLocaleTimeString('th-TH');
+        if (heroStatus) {
+          heroStatus.textContent = offlinePreview
+            ? 'พรีวิวแบบไม่ต่อเน็ต — เปิดบนเว็บจริงเพื่อดูสถานะ'
+            : 'ตรวจสถานะไม่ได้ (อาจถูกบล็อกหรือออฟไลน์)';
+        }
+        setDot(dot, offlinePreview ? '' : 'bad');
+        setDot(heroDot, offlinePreview ? '' : 'bad');
+      })
+      .then(function () { if (timer) clearTimeout(timer); });
+  }
+
+  var refreshBtn = document.getElementById('refresh');
+  if (refreshBtn) refreshBtn.addEventListener('click', check);
+  check();
+
+  // scroll reveal
+  var items = [].slice.call(document.querySelectorAll('.reveal'));
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          io.unobserve(entry.target);
+        }
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    items.forEach(function (el) { io.observe(el); });
+  } else {
+    items.forEach(function (el) { el.classList.add('in'); });
+  }
+
+  // pointer glow on the hero card
+  var card = document.querySelector('.code-card');
+  if (card && window.matchMedia && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    card.addEventListener('pointermove', function (event) {
+      if (window.innerWidth < 960) return;
+      var r = card.getBoundingClientRect();
+      var x = (event.clientX - r.left) / r.width - 0.5;
+      var y = (event.clientY - r.top) / r.height - 0.5;
+      card.style.transform = 'perspective(1200px) rotateY(' + (-4 + x * 5).toFixed(2) + 'deg) rotateX(' + (2 - y * 5).toFixed(2) + 'deg)';
+    });
+    card.addEventListener('pointerleave', function () {
+      card.style.transform = '';
+    });
+  }
+})();
+</script>
+</body>
+</html>

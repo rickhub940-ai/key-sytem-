@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex,nofollow" />
+<title>999MS · Control</title>
+<meta name="theme-color" content="#05060b" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230a0c14'/%3E%3Cpath d='M20 42c6-10 10-14 14-20M24 22h16v6h-7l7 14h-6l-4-8-5 8h-6l9-14h-4z' fill='%2338d6ff'/%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bg:#05060b;--panel:rgba(255,255,255,.04);--panel-2:rgba(255,255,255,.07);
+    --line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.16);
+    --text:#e9ecf7;--muted:#8b93ad;--cyan:#38d6ff;--violet:#8b7bff;--mint:#3ee6b0;--danger:#ff6b81;--amber:#ffc65c;
+    --grad:linear-gradient(100deg,var(--cyan),var(--violet) 55%,var(--mint));
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Noto Sans Thai","Leelawadee UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;min-height:100vh}
+  body::before{content:"";position:fixed;inset:-25% -10% auto -10%;height:60vh;z-index:-1;
+    background:radial-gradient(38% 55% at 15% 15%,rgba(56,214,255,.14),transparent 70%),
+               radial-gradient(38% 55% at 85% 5%,rgba(139,123,255,.14),transparent 70%);filter:blur(10px)}
+  a{color:inherit}
+  .mono{font-family:var(--mono)}
+  .wrap{width:min(1240px,94vw);margin-inline:auto}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 15px;border-radius:10px;
+    border:1px solid var(--line-2);background:var(--panel);color:var(--text);font:inherit;font-size:.88rem;font-weight:600;
+    cursor:pointer;transition:.18s;white-space:nowrap}
+  .btn:hover{background:var(--panel-2);border-color:rgba(255,255,255,.3)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn-primary{border:0;background:var(--grad);color:#04060d}
+  .btn-danger{border-color:rgba(255,107,129,.4);color:#ffb3bf;background:rgba(255,107,129,.08)}
+  .btn-danger:hover{background:rgba(255,107,129,.16);border-color:rgba(255,107,129,.65)}
+  .btn-sm{padding:6px 11px;font-size:.8rem;border-radius:8px}
+  .btn-ghost{background:transparent}
+  input,select{font:inherit;color:var(--text);background:rgba(0,0,0,.35);border:1px solid var(--line-2);
+    border-radius:10px;padding:10px 13px;width:100%;outline:none;transition:border-color .2s}
+  input:focus,select:focus{border-color:rgba(56,214,255,.55)}
+  input::placeholder{color:#5d6580}
+  label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:6px}
+
+  /* login */
+  #gate{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:rgba(5,6,11,.92);backdrop-filter:blur(10px);padding:20px}
+  #gate.hide{display:none}
+  .gate-card{width:min(420px,100%);border:1px solid var(--line-2);border-radius:20px;padding:30px;
+    background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.015));
+    box-shadow:0 40px 90px -40px #000}
+  .gate-card h1{font-size:1.35rem;margin:0 0 6px}
+  .gate-card p{color:var(--muted);font-size:.9rem;margin:0 0 22px}
+  .gate-card .btn{width:100%;margin-top:14px;padding:12px}
+  .err{color:#ffb3bf;font-size:.85rem;min-height:20px;margin-top:10px}
+  .brand-r{display:flex;align-items:center;gap:10px;margin-bottom:22px;font-weight:700}
+  .mark{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;
+    background:linear-gradient(160deg,rgba(56,214,255,.22),rgba(139,123,255,.22));border:1px solid var(--line-2)}
+  .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+
+  /* shell */
+  header{position:sticky;top:0;z-index:20;backdrop-filter:blur(14px);background:rgba(5,6,11,.7);border-bottom:1px solid var(--line)}
+  .bar{display:flex;align-items:center;gap:14px;height:64px}
+  .bar .spacer{margin-left:auto}
+  .pill{display:inline-flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);
+    border:1px solid var(--line);border-radius:999px;padding:6px 12px;background:rgba(255,255,255,.03)}
+  .dot{width:8px;height:8px;border-radius:50%;background:#5c6478}
+  .dot.ok{background:var(--mint);box-shadow:0 0 0 0 rgba(62,230,176,.5);animation:pulse 2.2s infinite}
+  .dot.bad{background:var(--danger)}
+  .dot.wait{background:var(--amber);animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(62,230,176,.45)}50%{box-shadow:0 0 0 6px rgba(62,230,176,0)}}
+
+  main{padding:26px 0 60px}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+  .stat{border:1px solid var(--line);background:var(--panel);border-radius:16px;padding:18px 20px}
+  .stat .k{font-size:.76rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .stat .v{font-size:1.55rem;font-weight:700;letter-spacing:-.02em;margin-top:6px}
+  .stat .s{font-size:.78rem;color:var(--muted);margin-top:2px}
+  .stat.warn{border-color:rgba(255,198,92,.35)}
+
+  .grid{display:grid;grid-template-columns:1.6fr .9fr;gap:16px;align-items:start}
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:18px;overflow:hidden}
+  .card-h{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
+  .card-h h2{font-size:.98rem;margin:0}
+  .card-h .spacer{margin-left:auto}
+  .card-b{padding:16px 18px}
+
+  table{width:100%;border-collapse:collapse;font-size:.87rem}
+  th{text-align:left;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+    font-weight:600;padding:10px 12px;border-bottom:1px solid var(--line)}
+  td{padding:12px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
+  tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:rgba(255,255,255,.025)}
+  .ident{display:flex;flex-direction:column;gap:2px}
+  .ident b{font-family:var(--mono);font-size:.82rem;font-weight:500}
+  .ident span{font-size:.74rem;color:var(--muted)}
+  .acts{display:flex;gap:6px;flex-wrap:wrap}
+  .empty{padding:36px 18px;text-align:center;color:var(--muted);font-size:.9rem}
+  .tag{display:inline-flex;align-items:center;gap:6px;font-size:.74rem;padding:3px 9px;border-radius:999px;
+    border:1px solid rgba(62,230,176,.28);background:rgba(62,230,176,.09);color:#9df0d2;font-weight:600}
+  .tag.script{border-color:rgba(56,214,255,.28);background:rgba(56,214,255,.09);color:#a9ebff}
+  .tag.warn{border-color:rgba(255,198,92,.35);background:rgba(255,198,92,.1);color:#ffd899}
+  .tag.bad{border-color:rgba(255,107,129,.35);background:rgba(255,107,129,.1);color:#ffb3bf}
+  .hint{font-size:.8rem;color:var(--muted);margin:0 0 12px}
+  .row{display:flex;gap:10px}
+  .row > *{flex:1}
+  .stack{display:flex;flex-direction:column;gap:12px}
+  .ban-list{display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto}
+  .ban-item{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:.78rem;
+    padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:rgba(0,0,0,.25);color:#c2c9de}
+  .ban-item span{color:var(--muted)}
+  .split{display:grid;grid-template-columns:86px 1fr;gap:8px}
+
+  #log{font-family:var(--mono);font-size:.78rem;color:var(--muted);max-height:170px;overflow:auto;
+    display:flex;flex-direction:column;gap:4px}
+  #log div{border-left:2px solid var(--line-2);padding-left:9px}
+  #log .ok{border-color:var(--mint);color:#bff5e2}
+  #log .err{border-color:var(--danger);color:#ffc1ca}
+
+  .toasts{position:fixed;right:18px;bottom:18px;z-index:60;display:flex;flex-direction:column;gap:8px;max-width:min(360px,90vw)}
+  .toast{border:1px solid var(--line-2);background:#0c0f19;border-radius:12px;padding:12px 14px;font-size:.86rem;
+    box-shadow:0 20px 50px -20px #000;animation:in .25s ease}
+  .toast.ok{border-color:rgba(62,230,176,.4)}
+  .toast.err{border-color:rgba(255,107,129,.45)}
+  @keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  .rotate{animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @media(max-width:1000px){
+    .stats{grid-template-columns:1fr 1fr}
+    .grid{grid-template-columns:1fr}
+  }
+  @media(max-width:640px){
+    .stats{grid-template-columns:1fr}
+    .bar{gap:8px}.pill.hide-sm{display:none}
+    td.hide-sm,th.hide-sm{display:none}
+    .acts .btn{flex:1}
+  }
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- ── login gate ── -->
+<div id="gate">
+  <form class="gate-card" id="gateForm" autocomplete="off">
+    <div class="brand-r">
+      <span class="mark"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M5 19c3.6-6.2 6.2-9.6 9-14M8 5h9v3.4h-4.2L18 19h-3.6l-2.2-4.6L8.6 19H5l4.6-7.2H6.4z" fill="#38d6ff"/></svg></span>
+      <span>999<span class="grad">MS</span> · Control</span>
+    </div>
+    <h1>เข้าสู่ระบบควบคุม</h1>
+    <p>ใส่ <span class="mono">ADMIN_TOKEN</span> ของโปรเจกต์ ระบบจะเก็บไว้ในแท็บนี้เท่านั้น (ไม่บันทึกลงเครื่อง)</p>
+    <label for="token">Admin token</label>
+    <input id="token" type="password" placeholder="วาง token ที่นี่" spellcheck="false" />
+    <button class="btn btn-primary" id="loginBtn" type="submit">เข้าสู่ระบบ</button>
+    <div class="err" id="gateErr"></div>
+  </form>
+</div>
+
+<header>
+  <div class="wrap bar">
+    <a class="brand-r" href="/" style="margin:0;font-weight:700;font-size:.98rem">
+      <span class="mark" style="width:30px;height:30px">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M5 19c3.6-6.2 6.2-9.6 9-14M8 5h9v3.4h-4.2L18 19h-3.6l-2.2-4.6L8.6 19H5l4.6-7.2H6.4z" fill="#38d6ff"/></svg>
+      </span>
+      <span>Control</span>
+    </a>
+    <span class="pill hide-sm"><span class="dot" id="gwDot"></span><span id="gwLabel">gateway —</span></span>
+    <span class="pill hide-sm mono" id="clock">—</span>
+    <span class="spacer"></span>
+    <button class="btn btn-sm" id="refreshBtn" type="button">
+      <svg id="refreshIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+      รีเฟรช
+    </button>
+    <button class="btn btn-sm btn-ghost" id="logoutBtn" type="button">ออก</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="stats">
+    <div class="stat">
+      <div class="k">Clients online</div>
+      <div class="v" id="statClients">—</div>
+      <div class="s" id="statClientsSub">จาก realtime gateway</div>
+    </div>
+    <div class="stat">
+      <div class="k">Gateway</div>
+      <div class="v" id="statGateway">—</div>
+      <div class="s" id="statGatewaySub">Render · wss</div>
+    </div>
+    <div class="stat">
+      <div class="k">Bans</div>
+      <div class="v" id="statBans">—</div>
+      <div class="s" id="statBansSub">hwid / user / ip</div>
+    </div>
+    <div class="stat">
+      <div class="k">อัปเดตล่าสุด</div>
+      <div class="v" id="statUpdated">—</div>
+      <div class="s">รีเฟรชอัตโนมัติทุก 15 วิ</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="stack">
+      <section class="card">
+        <div class="card-h">
+          <h2>Clients ที่เชื่อมต่อ</h2>
+          <span class="pill" id="countPill">0</span>
+          <span class="spacer"></span>
+          <span class="pill hide-sm">จับมือ 2 ขั้น (challenge → response)</span>
+        </div>
+        <div id="sessionsHost">
+          <div class="empty">ยังไม่มีข้อมูล — กดรีเฟรช</div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h"><h2>บันทึกการทำงาน</h2><span class="spacer"></span>
+          <button class="btn btn-sm btn-ghost" id="clearLog" type="button">ล้าง</button>
+        </div>
+        <div class="card-b"><div id="log"></div></div>
+      </section>
+
+      <section class="card">
+        <div class="card-h">
+          <h2>คำขอที่เข้ามาล่าสุด</h2>
+          <span class="pill" id="traceCount">0</span>
+          <span class="spacer"></span>
+          <span class="pill hide-sm">จาก executor / เบราว์เซอร์</span>
+        </div>
+        <div id="traceHost"><div class="empty">ยังไม่มีข้อมูล</div></div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="card">
+        <div class="card-h"><h2>แบน / ตัดสิทธิ์</h2></div>
+        <div class="card-b stack">
+          <p class="hint">แบนมีผลกับ session ที่เริ่มใหม่ทันที ส่วน session ที่ค้างอยู่ให้กด <b>Kick</b> ที่แถวนั้นอีกครั้ง</p>
+          <div>
+            <label for="banType">ประเภท</label>
+            <select id="banType">
+              <option value="hwid">HWID (ค่าจาก executor)</option>
+              <option value="hwidHash">HWID hash (64 hex)</option>
+              <option value="user">User ID</option>
+              <option value="ip">IP address</option>
+            </select>
+          </div>
+          <div>
+            <label for="banValue">ค่า</label>
+            <input id="banValue" placeholder="วางค่าแล้วกดแบน" spellcheck="false" />
+          </div>
+          <button class="btn btn-danger" id="banBtn" type="button">แบน</button>
+          <div style="border-top:1px solid var(--line);padding-top:12px">
+            <div class="k" style="font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:8px">รายการที่แบนอยู่</div>
+            <div class="ban-list" id="banList"><div class="hint" style="margin:0">—</div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h"><h2>คำสั่งด่วน</h2></div>
+        <div class="card-b stack">
+          <p class="hint">ส่งข้อความถึงทุก client ที่กำลังเชื่อมต่อ</p>
+          <input id="broadcastMsg" placeholder="ข้อความถึงผู้เล่น" maxlength="256" />
+          <button class="btn" id="broadcastBtn" type="button">ส่งถึงทุกคน</button>
+          <button class="btn btn-danger" id="kickAllBtn" type="button">ตัดการเชื่อมต่อทั้งหมด</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+(function () {
+  'use strict';
+  var KEY = 'ms999_admin_token';
+  var state = { token: sessionStorage.getItem(KEY) || '', sessions: [], timer: null, busy: false };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var gate = $('gate'), gateErr = $('gateErr'), gateForm = $('gateForm'), tokenInput = $('token');
+
+  function toast(message, kind) {
+    var el = document.createElement('div');
+    el.className = 'toast ' + (kind || '');
+    el.textContent = message;
+    $('toasts').appendChild(el);
+    setTimeout(function () { el.remove(); }, 4200);
+  }
+
+  function logLine(message, kind) {
+    var line = document.createElement('div');
+    if (kind) line.className = kind;
+    var t = new Date().toLocaleTimeString('th-TH');
+    line.textContent = t + '  ' + message;
+    var host = $('log');
+    host.insertBefore(line, host.firstChild);
+    while (host.children.length > 60) host.removeChild(host.lastChild);
+  }
+
+  function ago(ms) {
+    if (!ms) return '—';
+    var s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    if (s < 5) return 'เมื่อสักครู่';
+    if (s < 60) return s + ' วิที่แล้ว';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + ' นาทีที่แล้ว';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + ' ชั่วโมงที่แล้ว';
+    return Math.floor(h / 24) + ' วันที่แล้ว';
+  }
+
+  function dur(ms) {
+    if (!ms) return '—';
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + ' วิ';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + ' นาที';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + ' ชม. ' + (m % 60) + ' น.';
+    return Math.floor(h / 24) + ' วัน';
+  }
+
+  function api(path, body) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-admin-token': state.token },
+      body: JSON.stringify(body || {}),
+      cache: 'no-store',
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (data) {
+        return { status: res.status, data: data };
+      });
+    });
+  }
+
+  function setDot(el, cls) { el.classList.remove('ok', 'bad', 'wait'); if (cls) el.classList.add(cls); }
+
+  function showGate(message) {
+    gate.classList.remove('hide');
+    gateErr.textContent = message || '';
+    if (state.timer) clearInterval(state.timer);
+  }
+
+  /* ── login ── */
+  gateForm.addEventListener('submit', function (event) {
+    event.preventDefault();
+    var token = tokenInput.value.trim();
+    if (!token) { gateErr.textContent = 'กรุณาใส่ token'; return; }
+    $('loginBtn').disabled = true;
+    state.token = token;
+    api('/api/control/sessions').then(function (result) {
+      $('loginBtn').disabled = false;
+      if (result.status === 401) {
+        state.token = '';
+        gateErr.textContent = 'token ไม่ถูกต้อง';
+        return;
+      }
+      sessionStorage.setItem(KEY, token);
+      gate.classList.add('hide');
+      logLine('เข้าสู่ระบบแล้ว', 'ok');
+      loadAll();
+      state.timer = setInterval(function () { if (!document.hidden) loadAll(true); }, 15000);
+    }).catch(function () {
+      $('loginBtn').disabled = false;
+      gateErr.textContent = 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้';
+    });
+  });
+
+  $('logoutBtn').addEventListener('click', function () {
+    sessionStorage.removeItem(KEY);
+    state.token = '';
+    state.sessions = [];
+    showGate('');
+    gateErr.textContent = '';
+  });
+
+  /* ── data ── */
+  function loadAll(quiet) {
+    if (state.busy || !state.token) return;
+    state.busy = true;
+    var icon = $('refreshIcon');
+    icon.classList.add('rotate');
+    api('/api/control/sessions').then(function (result) {
+      if (result.status === 401) { showGate('session หมดอายุ กรุณาใส่ token ใหม่'); return; }
+      var data = result.data || {};
+      renderGateway(data);
+      renderSessions(data.sessions || []);
+      if (!quiet) logLine('โหลดข้อมูลแล้ว · ' + (data.count || 0) + ' client', 'ok');
+      $('statUpdated').textContent = new Date().toLocaleTimeString('th-TH').slice(0, 8);
+    }).catch(function () {
+      setDot($('gwDot'), 'bad');
+      $('gwLabel').textContent = 'gateway ออฟไลน์';
+      $('statGateway').textContent = 'ออฟไลน์';
+      if (!quiet) logLine('เรียก API ไม่สำเร็จ', 'err');
+    }).then(function () {
+      state.busy = false;
+      icon.classList.remove('rotate');
+    });
+
+    api('/api/control/traffic', { limit: 40 }).then(function (result) {
+      if (result.status !== 200 || !result.data) return;
+      renderTraffic(result.data.traffic || []);
+    }).catch(function () {});
+
+    api('/api/control/bans').then(function (result) {
+      if (result.status !== 200) return;
+      var data = result.data || {};
+      var s = data.stats || { hwids: 0, users: 0, ips: 0 };
+      $('statBans').textContent = (s.hwids + s.users + s.ips);
+      $('statBansSub').textContent = 'hwid ' + s.hwids + ' · user ' + s.users + ' · ip ' + s.ips;
+      renderBans(data.lists || {});
+    }).catch(function () {});
+  }
+
+  function renderGateway(data) {
+    var gw = data.gateway || {};
+    var ok = data.ok && gw.reachable !== false;
+    setDot($('gwDot'), ok ? 'ok' : (gw.reason === 'gateway_timeout' ? 'wait' : 'bad'));
+    $('gwLabel').textContent = ok
+      ? 'gateway v' + (gw.version || '?')
+      : (gw.reason === 'gateway_timeout' ? 'gateway กำลังตื่น…' : 'gateway ออฟไลน์');
+    $('statGateway').textContent = ok ? 'ออนไลน์' : (gw.reason === 'gateway_timeout' ? 'กำลังตื่น' : 'ออฟไลน์');
+    $('statGatewaySub').textContent = gw.uptime != null ? ('uptime ' + dur(gw.uptime * 1000)) : 'Render · wss';
+    $('statClients').textContent = data.count != null ? data.count : 0;
+    $('statClientsSub').textContent = ok ? 'จาก realtime gateway' : (gw.reason || 'ไม่มีข้อมูล');
+    $('countPill').textContent = (data.count || 0) + ' clients';
+  }
+
+  function esc(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+    });
+  }
+
+  function renderSessions(list) {
+    state.sessions = list;
+    var host = $('sessionsHost');
+    if (!list.length) {
+      host.innerHTML = '<div class="empty">ยังไม่มี client เชื่อมต่ออยู่<br><span style="font-size:.8rem">เมื่อมีคนรัน loader ด้วยคีย์ที่ผ่าน ระบบจะแสดงที่นี่</span></div>';
+      return;
+    }
+    var rows = list.map(function (session) {
+      var jti = String(session.jti || '');
+      var hash = String(session.hwidHash || '');
+      var shortHash = hash ? hash.slice(0, 10) + '…' : '—';
+      return '<tr data-jti="' + esc(jti) + '" data-hash="' + esc(hash) + '">' +
+        '<td><div class="ident"><b>' + esc(jti.slice(0, 8)) + '…' + esc(jti.slice(-4)) + '</b>' +
+          '<span>' + ago(session.connectedAt) + ' · ต่อเนื่อง ' + dur(Date.now() - (session.connectedAt || Date.now())) + '</span></div></td>' +
+        '<td><span class="tag script">' + esc(session.scriptName || '—') + '</span></td>' +
+        '<td class="hide-sm"><div class="ident"><b>' + esc(shortHash) + '</b><span>' + ago(session.lastActivityAt) + '</span></div></td>' +
+        '<td><div class="acts">' +
+          '<button class="btn btn-sm" data-act="notice">Notice</button>' +
+          '<button class="btn btn-sm" data-act="reauth">Reauth</button>' +
+          '<button class="btn btn-sm btn-danger" data-act="disconnect">Kick</button>' +
+          '<button class="btn btn-sm btn-danger" data-act="ban">แบน</button>' +
+        '</div></td>' +
+      '</tr>';
+    }).join('');
+    host.innerHTML = '<div style="overflow:auto"><table><thead><tr>' +
+      '<th>Client</th><th>สคริปต์</th><th class="hide-sm">HWID / ล่าสุด</th><th>การจัดการ</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function statusClass(code) {
+    if (code >= 200 && code < 300) return 'tag';
+    if (code >= 300 && code < 400) return 'tag warn';
+    return 'tag bad';
+  }
+
+  function renderTraffic(list) {
+    $('traceCount').textContent = list.length + ' รายการ';
+    var host = $('traceHost');
+    if (!list.length) {
+      host.innerHTML = '<div class="empty">ยังไม่มีคำขอ — ให้คนรัน loadc.lua แล้วกดรีเฟรช</div>';
+      return;
+    }
+    var rows = list.map(function (row) {
+      var time = new Date(row.ts).toLocaleTimeString('th-TH');
+      var label = (row.method || 'GET') + ' ' + (row.path || '');
+      if (row.name) label += '  (' + row.name + ')';
+      return '<tr>' +
+        '<td class="mono" style="font-size:.76rem;white-space:nowrap">' + esc(time) + '</td>' +
+        '<td><div class="ident"><b>' + esc(label) + '</b><span>' + esc(row.host || '') + ' · ' + esc((row.ua || '').slice(0, 34)) + '</span></div></td>' +
+        '<td><span class="' + statusClass(row.status) + '">' + esc(String(row.status)) + '</span></td>' +
+      '</tr>';
+    }).join('');
+    host.innerHTML = '<div style="overflow:auto;max-height:260px"><table><thead><tr>' +
+      '<th>เวลา</th><th>คำขอ</th><th>สถานะ</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function renderBans(lists) {
+    var host = $('banList');
+    var items = [];
+    (lists.hwids || []).forEach(function (v) { items.push(['HWID', v]); });
+    (lists.users || []).forEach(function (v) { items.push(['USER', v]); });
+    (lists.ips || []).forEach(function (v) { items.push(['IP', v]); });
+    if (!items.length) {
+      host.innerHTML = '<div class="hint" style="margin:0">ยังไม่มีรายการที่แบนใน instance นี้</div>';
+      return;
+    }
+    host.innerHTML = items.map(function (pair) {
+      return '<div class="ban-item"><span>' + esc(pair[0]) + '</span><b style="font-weight:500">' + esc(pair[1]) + '</b></div>';
+    }).join('');
+  }
+
+  /* ── session actions ── */
+  $('sessionsHost').addEventListener('click', function (event) {
+    var btn = event.target.closest('button[data-act]');
+    if (!btn) return;
+    var row = btn.closest('tr');
+    var jti = row.getAttribute('data-jti');
+    var hash = row.getAttribute('data-hash');
+    var act = btn.getAttribute('data-act');
+
+    if (act === 'ban') {
+      if (!hash) { toast('client นี้ไม่มี hwid hash', 'err'); return; }
+      if (!confirm('แบน HWID นี้ถาวรและตัดการเชื่อมต่อ?')) return;
+      api('/api/admin/ban', { type: 'hwidHash', value: hash }).then(function (result) {
+        if (result.status === 200) {
+          toast('แบนแล้ว', 'ok');
+          logLine('แบน HWID ' + hash.slice(0, 12) + '…', 'ok');
+          return api('/api/control/command', { jti: jti, command: 'disconnect', reason: 'banned' });
+        }
+        toast('แบนไม่สำเร็จ', 'err');
+      }).then(function () { loadAll(true); })
+        .catch(function () { toast('เรียกเซิร์ฟเวอร์ไม่ได้', 'err'); });
+      return;
+    }
+
+    var payload = { jti: jti, command: act };
+    if (act === 'notice') {
+      var text = prompt('ข้อความถึง client นี้ (ไม่เกิน 256 ตัวอักษร):', '');
+      if (text === null) return;
+      payload.message = text.slice(0, 256);
+    }
+    if (act === 'disconnect') {
+      if (!confirm('ตัดการเชื่อมต่อ client นี้?')) return;
+      payload.reason = 'admin disconnect';
+    }
+    btn.disabled = true;
+    api('/api/control/command', payload).then(function (result) {
+      btn.disabled = false;
+      if (result.status === 200 && result.data && result.data.ok) {
+        toast(act + ' ส่งแล้ว', 'ok');
+        logLine(act + ' → ' + jti.slice(0, 8) + '…', 'ok');
+      } else {
+        toast('ส่งคำสั่งไม่สำเร็จ', 'err');
+        logLine(act + ' ล้มเหลว', 'err');
+      }
+      setTimeout(function () { loadAll(true); }, 800);
+    }).catch(function () {
+      btn.disabled = false;
+      toast('เรียกเซิร์ฟเวอร์ไม่ได้', 'err');
+    });
+  });
+
+  /* ── manual ban form ── */
+  $('banBtn').addEventListener('click', function () {
+    var type = $('banType').value;
+    var value = $('banValue').value.trim();
+    if (!value) { toast('ใส่ค่าที่จะแบน', 'err'); return; }
+    api('/api/admin/ban', { type: type, value: value }).then(function (result) {
+      if (result.status === 200) {
+        toast('แบนแล้ว', 'ok');
+        logLine('แบน ' + type + ' ' + value.slice(0, 14) + '…', 'ok');
+        $('banValue').value = '';
+        loadAll(true);
+      } else {
+        toast(result.data && result.data.error ? result.data.error : 'แบนไม่สำเร็จ', 'err');
+      }
+    }).catch(function () { toast('เรียกเซิร์ฟเวอร์ไม่ได้', 'err'); });
+  });
+
+  /* ── broadcast ── */
+  function forEachSession(fn) {
+    return state.sessions.reduce(function (chain, session) {
+      return chain.then(function () { return fn(session); });
+    }, Promise.resolve());
+  }
+
+  $('broadcastBtn').addEventListener('click', function () {
+    var text = $('broadcastMsg').value.trim();
+    if (!text) { toast('พิมพ์ข้อความก่อน', 'err'); return; }
+    if (!state.sessions.length) { toast('ยังไม่มี client', 'err'); return; }
+    forEachSession(function (session) {
+      return api('/api/control/command', { jti: session.jti, command: 'notice', message: text });
+    }).then(function () {
+      toast('ส่งถึง ' + state.sessions.length + ' client', 'ok');
+      logLine('broadcast → ' + state.sessions.length + ' client', 'ok');
+    }).catch(function () { toast('ส่งไม่ครบ', 'err'); });
+  });
+
+  $('kickAllBtn').addEventListener('click', function () {
+    if (!state.sessions.length) { toast('ยังไม่มี client', 'err'); return; }
+    if (!confirm('ตัดการเชื่อมต่อ ' + state.sessions.length + ' client ทั้งหมด?')) return;
+    forEachSession(function (session) {
+      return api('/api/control/command', { jti: session.jti, command: 'disconnect', reason: 'admin kick all' });
+    }).then(function () {
+      toast('ตัดการเชื่อมต่อทั้งหมดแล้ว', 'ok');
+      logLine('kick all → ' + state.sessions.length + ' client', 'ok');
+      setTimeout(function () { loadAll(true); }, 800);
+    }).catch(function () { toast('ทำไม่ครบ', 'err'); });
+  });
+
+  $('refreshBtn').addEventListener('click', function () { loadAll(false); });
+  $('clearLog').addEventListener('click', function () { $('log').innerHTML = ''; });
+  $('clock').textContent = new Date().toLocaleDateString('th-TH');
+  setInterval(function () {
+    $('clock').textContent = new Date().toLocaleTimeString('th-TH');
+  }, 1000);
+
+  /* ── boot ── */
+  if (state.token) {
+    api('/api/control/sessions').then(function (result) {
+      if (result.status === 200) {
+        gate.classList.add('hide');
+        loadAll(true);
+        state.timer = setInterval(function () { if (!document.hidden) loadAll(true); }, 15000);
+      } else {
+        showGate('token ที่บันทึกไว้ใช้ไม่ได้แล้ว');
+      }
+    }).catch(function () { showGate('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้'); });
+  } else {
+    showGate('');
+  }
+})();
+</script>
+</body>
+</html>

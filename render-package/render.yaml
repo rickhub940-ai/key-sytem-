@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: loader999mss-realtime
+    runtime: node
+    region: singapore
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - fromGroup: loader999mss-realtime-secrets

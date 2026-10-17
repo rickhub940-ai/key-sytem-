@@ -1,0 +1,102 @@
+{
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 10,
+      "includeFiles": "{scripts,artifacts,admin,web}/**"
+    }
+  },
+  "routes": [
+    {
+      "src": "/",
+      "dest": "/web/index.html"
+    },
+    {
+      "src": "/control",
+      "dest": "/web/control.html"
+    },
+    {
+      "src": "/api/health",
+      "dest": "/api/auth?action=health"
+    },
+    {
+      "src": "/api/control/sessions",
+      "dest": "/api/auth?action=control-sessions"
+    },
+    {
+      "src": "/api/control/command",
+      "dest": "/api/auth?action=control-command"
+    },
+    {
+      "src": "/api/control/bans",
+      "dest": "/api/auth?action=control-bans"
+    },
+    {
+      "src": "/api/control/traffic",
+      "dest": "/api/auth?action=control-traffic"
+    },
+    {
+      "src": "/payload\\.lua",
+      "dest": "/api/auth?action=payload"
+    },
+    {
+      "src": "/loadc\\.lua",
+      "dest": "/api/auth?action=artifact&name=loadc"
+    },
+    {
+      "src": "/loada\\.lua/([^/]+)/([^/]+)",
+      "dest": "/api/auth?action=artifact&name=loada&d=$1&n=$2"
+    },
+    {
+      "src": "/loader\\.lua",
+      "dest": "/api/auth?action=artifact&name=loader"
+    },
+    {
+      "src": "/999MS-sdk\\.lua",
+      "dest": "/api/auth?action=artifact&name=sdk"
+    },
+    {
+      "src": "/api/verify",
+      "dest": "/api/auth?action=verify"
+    },
+    {
+      "src": "/api/script",
+      "dest": "/api/auth?action=script"
+    },
+    {
+      "src": "/api/script-verify",
+      "dest": "/api/auth?action=script-verify"
+    },
+    {
+      "src": "/api/heartbeat",
+      "dest": "/api/auth?action=heartbeat"
+    },
+    {
+      "src": "/api/realtime-ticket",
+      "dest": "/api/auth?action=realtime-ticket"
+    },
+    {
+      "src": "/api/realtime/sessions",
+      "dest": "/api/auth?action=realtime-sessions"
+    },
+    {
+      "src": "/api/realtime/command",
+      "dest": "/api/auth?action=realtime-command"
+    },
+    {
+      "src": "/admin",
+      "dest": "/api/auth?action=dashboard"
+    },
+    {
+      "src": "/api/start",
+      "dest": "/api/auth?action=start"
+    },
+    {
+      "src": "/api/admin/ban",
+      "dest": "/api/auth?action=admin-ban"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/api/auth?action=trap"
+    }
+  ]
+}

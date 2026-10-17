@@ -1,0 +1,100 @@
+'use strict';
+
+const http = require('node:http');
+const handler = require('./api/auth');
+
+const PORT = Number.parseInt(process.env.PORT || '10000', 10);
+const MAX_BODY_BYTES = 1024 * 1024;
+
+function body(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > MAX_BODY_BYTES) {
+        reject(new Error('body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.once('error', reject);
+    req.once('end', () => {
+      if (!chunks.length) return resolve({});
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+      catch { reject(new Error('invalid json')); }
+    });
+  });
+}
+
+function response(res) {
+  res.status = (code) => { res.statusCode = code; return res; };
+  res.json = (value) => {
+    if (!res.getHeader('content-type')) res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify(value));
+    return res;
+  };
+  res.send = (value = '') => {
+    if (Buffer.isBuffer(value) || typeof value === 'string') res.end(value);
+    else res.end(JSON.stringify(value));
+    return res;
+  };
+  return res;
+}
+
+function route(req) {
+  const url = new URL(req.url, 'http://gateway.local');
+  const query = Object.fromEntries(url.searchParams.entries());
+  const routes = {
+    '/payload.lua': ['payload'],
+    '/loadc.lua': ['artifact', 'loadc'],
+    '/loader.lua': ['artifact', 'loader'],
+    '/999MS-sdk.lua': ['artifact', 'sdk'],
+    '/api/verify': ['verify'],
+    '/api/script': ['script'],
+    '/api/script-verify': ['script-verify'],
+    '/api/heartbeat': ['heartbeat'],
+    '/api/realtime-ticket': ['realtime-ticket'],
+    '/api/realtime/sessions': ['realtime-sessions'],
+    '/api/realtime/command': ['realtime-command'],
+    '/admin': ['dashboard'],
+    '/api/start': ['start'],
+    '/api/admin/ban': ['admin-ban'],
+  };
+  const match = url.pathname.match(/^\/loada\.lua\/([^/]+)\/([^/]+)$/);
+  if (match) {
+    query.action = 'artifact';
+    query.name = 'loada';
+    query.d = match[1];
+    query.n = match[2];
+  } else {
+    const mapped = routes[url.pathname] || ['trap'];
+    query.action = mapped[0];
+    if (mapped[1]) query.name = mapped[1];
+  }
+  req.query = query;
+}
+
+const server = http.createServer(async (req, res) => {
+  response(res);
+  route(req);
+  if (req.method === 'GET' && req.url === '/health') {
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    return res.status(200).json({ ok: true, now: Date.now() });
+  }
+  if (req.method === 'POST' && String(req.headers['content-type'] || '').includes('application/json')) {
+    try { req.body = await body(req); }
+    catch { return res.status(400).json({ error: 'invalid json' }); }
+  } else {
+    req.body = {};
+  }
+  try {
+    await handler(req, res);
+  } catch (error) {
+    console.error('[http]', error.message);
+    if (!res.writableEnded) res.status(500).json({ error: 'internal error' });
+  }
+});
+
+server.listen(PORT, '0.0.0.0', () => console.log(`api listening on ${PORT}`));
