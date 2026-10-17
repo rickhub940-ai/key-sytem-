@@ -126,6 +126,29 @@ function deriveNext(token, now = Date.now()) {
   return { chainId, stage: nextStage, exp, token: tokenFor(nextStage, chainId, exp) };
 }
 
+// ── Fetch proof ──────────────────────────────────────────────────────────────
+// A stage body is only handed over to a client that already ran the stage
+// before it. That stage receives `nonce` in its body and must send back
+// sha256("999MS-fetch-v1|<nonce>|<token>"). A bare `game:HttpGet` or curl has
+// no nonce, so it gets the trap instead of the next stage.
+function deriveNonce(token, now = Date.now()) {
+  const claim = resolveToken(token, now);
+  if (!claim) return null;
+  return crypto
+    .createHmac('sha256', chainSecret())
+    .update(`999MS-nonce-v1|${claim.stage}|${claim.chainId}|${claim.exp}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+function fetchProof(nonce, token) {
+  if (typeof nonce !== 'string' || typeof token !== 'string') return null;
+  return crypto
+    .createHash('sha256')
+    .update(`999MS-fetch-v1|${nonce}|${token}`)
+    .digest('hex');
+}
+
 module.exports = {
   STAGES,
   NEXT_STAGE,
@@ -134,6 +157,8 @@ module.exports = {
   resolveToken,
   verifyToken,
   deriveNext,
+  deriveNonce,
+  fetchProof,
   consume,
   isTokenShape,
   linkTtlMs,

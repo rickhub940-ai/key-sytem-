@@ -34,7 +34,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = '84631dfa8ac341bdd2cd94c51de93f42643d58fb4f6b083883fb9d1b393c82d0';
+const STAGE_TWO_RAW_SHA256 = '4a85c6abc8c4543c643f3a8a65ab789d218b6a8a725ad2530fc2f90eb389a9d9';
 
 // ═══ Rate limit ═══
 const rateLimit = new Map();
@@ -205,6 +205,19 @@ function hwidFromRequest(req, bodyValue) {
   return { ok: true, hwid: value };
 }
 
+// A ticket is bound to the device that earned it. Every step after /api/verify
+// re-checks the device, so a copied ticket is worthless on another machine.
+function deviceMatches(req, hwidHash) {
+  const device = hwidFromRequest(req);
+  if (!device.ok) return { ok: false, reason: device.reason };
+  if (typeof hwidHash !== 'string' || !hwidHash) return { ok: false, reason: 'ticket has no device' };
+  if (hashHwid(device.hwid) !== hwidHash) {
+    noteEvent('device_reject', 'ticket used from another device');
+    return { ok: false, reason: 'device mismatch' };
+  }
+  return { ok: true };
+}
+
 // ═══ /api/link (admin) ═══
 // Creates one random, expiring loader link: /x/<40 hex>?at=<token>.
 async function handleLinkCreate(req, res) {
@@ -283,9 +296,12 @@ module.exports = async function handler(req, res) {
   // loadc is generated per request and is the only stage that mints a path
   // capability. The remaining legacy artifacts keep their static handoffs.
   if (action === 'artifact') {
-    if (req.method !== 'GET') return rejectOrTrap(req, res, 405);
+    const artifactName = req.query?.name || url.searchParams.get('name');
+    // Stage links answer only a proven POST; the entry script stays a GET.
+    const requiredMethod = artifactName === 'stage' ? 'POST' : 'GET';
+    if (req.method !== requiredMethod) return rejectOrTrap(req, res, 405);
     if (trapBrowserArtifacts() && isBrowserRequest(req)) return trapRedirect(res);
-    const name = req.query?.name || url.searchParams.get('name');
+    const name = artifactName;
     return await serveArtifact(req, res, name, url, requestOrigin(req));
   }
 
@@ -417,12 +433,13 @@ function renderLoaderArtifact() {
 // and written straight into that stage's body.
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
-function renderStage(name, baseUrl, nextUrl, nextSha) {
+function renderStage(name, baseUrl, nextUrl, nextSha, nextNonce) {
   const raw = name === 'loader' ? renderLoaderArtifact() : readArtifact(name);
   if (typeof raw !== 'string') return null;
   let body = applyChainTokens(raw, baseUrl);
   if (typeof nextUrl === 'string' && nextUrl) body = body.replaceAll('@NEXT@', nextUrl);
   if (typeof nextSha === 'string' && nextSha) body = body.replaceAll('@NEXT_SHA@', nextSha);
+  if (typeof nextNonce === 'string' && nextNonce) body = body.replaceAll('@NONCE@', nextNonce);
   return body;
 }
 
@@ -459,7 +476,13 @@ function renderChain(baseUrl, token, depth = 0) {
   const downstream = renderChain(baseUrl, next.token, depth + 1);
   if (!downstream) return null;
 
-  const body = renderStage(claim.stage, baseUrl, `${baseUrl}/${next.token}`, downstream.sha);
+  const body = renderStage(
+    claim.stage,
+    baseUrl,
+    `${baseUrl}/${next.token}`,
+    downstream.sha,
+    chainLinks.deriveNonce(next.token),
+  );
   return body ? { stage: claim.stage, body, sha: sha256(body) } : null;
 }
 
@@ -477,6 +500,7 @@ async function serveArtifact(req, res, name, url, origin) {
     const rendered = template
       .replaceAll('__STAGE2_TOKEN__', link.token)
       .replaceAll('__STAGE2_SHA256__', run.sha)
+      .replaceAll('__STAGE2_NONCE__', chainLinks.deriveNonce(link.token))
       .replaceAll('__BASE_URL__', baseUrl);
     const obfuscated = await obfuscateStageOne(rendered);
     if (!obfuscated) return res.status(503).send('');
@@ -493,6 +517,29 @@ async function serveArtifact(req, res, name, url, origin) {
   // carries no file name; the stage is recovered from its signature.
   if (name === 'stage') {
     const token = req.query?.t || url.searchParams.get('t');
+    const pending = chainLinks.resolveToken(token);
+    if (!pending) return rejectOrTrap(req, res);
+
+    // Execution proof: the body of the previous stage carried a nonce, and only
+    // a client that ran it can send back the matching hash. A plain GET (curl,
+    // `game:HttpGet`, a browser) never has it.
+    // The proof is over the full link the stage was given, not the bare token.
+    const expected = chainLinks.fetchProof(chainLinks.deriveNonce(token), `${baseUrl}/${token}`);
+    let supplied = '';
+    try {
+      const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+      if (body && typeof body.p === 'string') supplied = body.p;
+    } catch { supplied = ''; }
+    const proofOk = Boolean(expected) &&
+      supplied.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(supplied, 'utf8'), Buffer.from(expected, 'utf8'));
+    if (!proofOk || req.method !== 'POST') {
+      // Burn the link on the bad attempt so it cannot be retried either way.
+      chainLinks.consume(token);
+      noteEvent('crawl_reject', `stage ${pending.stage} fetched without proof (${req.method})`);
+      return rejectOrTrap(req, res);
+    }
+
     const claim = chainLinks.consume(token);
     if (!claim) return rejectOrTrap(req, res);
     const run = renderChain(baseUrl, token);
@@ -599,6 +646,10 @@ async function handleScript(req, res, ip) {
 
   const payload = verifyTicket(ticket);
   if (!payload) return res.status(401).json({ Valid: false, reason: 'invalid ticket' });
+
+  const device = deviceMatches(req, payload.hwidHash);
+  if (!device.ok)
+    return res.status(403).json({ Valid: false, reason: device.reason });
 
   // One-time hop from /api/verify: proves this request follows a real
   // verification instead of replaying a captured ticket.
@@ -783,6 +834,12 @@ async function handleHeartbeat(req, res, ip) {
 
   const payload = verifyTicket(ticket);
   if (!payload) return res.status(401).json({ kick: 'Session expired' });
+
+  const device = deviceMatches(req, payload.hwidHash);
+  if (!device.ok) {
+    sessions.delete(payload.jti);
+    return res.status(200).json({ kick: 'Device mismatch' });
+  }
 
   const reason = checkRevoked({ userId: payload.userId, ip });
   if (reason) {

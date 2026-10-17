@@ -250,26 +250,37 @@ end
 -- The server mints the Stage-3 link while serving this stage and writes it
 -- into the header table above; it is valid for ten seconds from that moment.
 local nextSha = "@NEXT_SHA@"
+local nextNonce = "@NONCE@"
 local nextUrl = gamaramam[1]
 -- "NEXT@" without the leading "@" so this guard is never itself replaced.
 if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("NEXT@", 1, true) then
     return Kick("[999MS] Stage link unavailable")
 end
 
+local cryptTable = (env and env.crypt) or crypt
+local hasher = type(cryptTable) == "table" and cryptTable.hash or nil
+if type(hasher) ~= "function" then
+    return Kick("[999MS] Loader hash unavailable")
+end
+
+-- Same proof the server expects: the link only opens for the stage that ran
+-- before it, never for a plain fetch of the URL.
+local okProof, proof = pcall(hasher, "999MS-fetch-v1|" .. nextNonce .. "|" .. nextUrl, "sha256")
+if not okProof or type(proof) ~= "string" then
+    return Kick("[999MS] Stage proof unavailable")
+end
+
 local ok, response = pcall(requestFn, {
     Url = nextUrl,
-    Method = "GET",
+    Method = "POST",
+    Headers = { ["content-type"] = "application/json" },
+    Body = '{"p":"' .. proof .. '"}',
 })
 if not ok or type(response) ~= "table" or response.StatusCode ~= 200 then
     return Kick("[999MS] Loader fetch failed")
 end
 
 local body = response.Body or ""
-local cryptTable = (env and env.crypt) or crypt
-local hasher = type(cryptTable) == "table" and cryptTable.hash or nil
-if type(hasher) ~= "function" then
-    return Kick("[999MS] Loader hash unavailable")
-end
 local okHash, digest = pcall(hasher, body, "sha256")
 if not okHash or type(digest) ~= "string" or string.lower(digest) ~= nextSha then
     return Kick("[999MS] Loader integrity check failed")

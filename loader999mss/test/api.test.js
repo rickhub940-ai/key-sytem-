@@ -133,11 +133,21 @@ async function main() {
   assert.equal(forgedHop.status, 409, 'a guessed hop is rejected');
 
   // ── /api/script refuses a ticket that never came through /api/verify ──
-  const noHop = await post('/api/script', { ticket, scriptName: 'main' });
+  const noHop = await post('/api/script', { ticket, scriptName: 'main' }, { 'x-ms999-hwid': hwid });
   assert.equal(noHop.status, 409, 'script requires a hop issued by verify');
+
+  // ── a ticket is worthless on another device ──
+  const otherDevice = await post('/api/script', { ticket, scriptName: 'main' },
+    { 'x-ms999-hwid': 'a-different-machine' });
+  assert.equal(otherDevice.status, 403, 'the ticket is bound to the device that earned it');
+  assert.equal((await otherDevice.json()).reason, 'device mismatch');
+
+  const noDevice = await post('/api/script', { ticket, scriptName: 'main' });
+  assert.equal(noDevice.status, 403, 'a request without a device is refused');
   assert.equal((await noHop.json()).reason, 'hop required');
 
-  const guessedHop = await post('/api/script', { ticket, scriptName: 'main', hop: 'a'.repeat(48), eq: 1 });
+  const guessedHop = await post('/api/script', { ticket, scriptName: 'main', hop: 'a'.repeat(48), eq: 1 },
+    { 'x-ms999-hwid': hwid });
   assert.equal(guessedHop.status, 409, 'a guessed hop is never accepted');
   assert.equal((await guessedHop.json()).reason, 'hop required');
 
@@ -247,15 +257,33 @@ async function main() {
 
   // Every later link is `<base>/<token>` and nothing else.
   const tokenOf = (link) => link.slice(link.lastIndexOf('/') + 1);
+  // The same proof the running stage sends: the server derives the nonce from
+  // the link itself, so the test can do that too (no shared state needed).
+  const proofOf = (link) => chainLinks.fetchProof(chainLinks.deriveNonce(tokenOf(link)), link);
+  const openStage = (link) => fetch(link, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-roblox-client': 'test' },
+    body: JSON.stringify({ p: proofOf(link) }),
+  });
   assert.match(tokenOf(stage2Url), TOKEN, 'the Stage-2 link is a bare token');
   assert.equal(stage2Url.replace(tokenOf(stage2Url), ''), `http://127.0.0.1:${port}/`,
     'the link carries no file name or sub-path');
 
-  const stage2Res = await fetch(stage2Url, { headers: { 'x-roblox-client': 'test' } });
-  assert.equal(stage2Res.status, 200, 'the minted Stage-2 link is served once');
+  // A bare GET (game:HttpGet, curl, a browser) gets the trap, not the stage.
+  const bareGet = await fetch(stage2Url, { headers: { 'x-roblox-client': 'test' }, redirect: 'manual' });
+  assert.notEqual(bareGet.status, 200, 'a plain GET never returns a stage body');
+
+  // Re-mint for the real fetch: the bare GET burned the first link.
+  const loadcB = await fetch(`http://127.0.0.1:${port}/loadc.lua`, { headers: { 'x-roblox-client': 'test' } });
+  await loadcB.text();
+  const stage2UrlB = loadcB.headers.get('x-999ms-stage2');
+  assert.ok(stage2UrlB && stage2UrlB !== stage2Url, 'the re-minted link is different');
+
+  const stage2Res = await openStage(stage2UrlB);
+  assert.equal(stage2Res.status, 200, 'the minted Stage-2 link opens for a proven fetch');
   const stage2 = await stage2Res.text();
   assert.ok(stage2.length > 500, 'Stage 2 body arrived');
-  assert.notEqual((await fetch(stage2Url, { redirect: 'manual' })).status, 200,
+  assert.notEqual((await openStage(stage2UrlB)).status, 200,
     'a burned Stage-2 link is never served twice');
 
   // ── The next link is minted while serving and embedded in the body ──
@@ -267,13 +295,13 @@ async function main() {
   assert.equal(stage3Url.includes('loada') || stage3Url.includes('loader') || stage3Url.includes('payload'),
     false, 'the link does not name its stage');
 
-  const stage3Res = await fetch(stage3Url, { headers: { 'x-roblox-client': 'test' } });
+  const stage3Res = await openStage(stage3Url);
   assert.equal(stage3Res.status, 200, 'Stage 3 link works');
   const stage3 = await stage3Res.text();
   assert.equal(/stage-pickup/.test(stage3), false, 'Stage 3 names no pickup endpoint');
   assert.match(stage3, /^local gamaramam = \{ "[^"]+" \};/,
     'Stage 3 opens with the same readable header');
-  assert.notEqual((await fetch(stage3Url, { redirect: 'manual' })).status, 200,
+  assert.notEqual((await openStage(stage3Url)).status, 200,
     'Stage 3 link is single use');
 
   // Regression: the placeholder must not appear inside the guard that checks
@@ -288,12 +316,12 @@ async function main() {
 
   const stage4Url = (stage3.match(LINK) || [])[0];
   assert.ok(stage4Url, 'Stage 3 carries a freshly minted Stage-4 link');
-  const stage4Res = await fetch(stage4Url, { headers: { 'x-roblox-client': 'test' } });
+  const stage4Res = await openStage(stage4Url);
   assert.equal(stage4Res.status, 200, 'Stage 4 link works');
   const stage4 = await stage4Res.text();
   assert.ok(stage4.length > 1000, 'payload body arrived');
   assert.equal(LINK.test(stage4), false, 'the payload is the end of the chain');
-  assert.equal(new Set([tokenOf(stage2Url), tokenOf(stage3Url), tokenOf(stage4Url)]).size, 3,
+  assert.equal(new Set([tokenOf(stage2UrlB), tokenOf(stage3Url), tokenOf(stage4Url)]).size, 3,
     'every link in a run is different');
 
   // The old lookup route is gone.

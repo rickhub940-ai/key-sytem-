@@ -591,15 +591,30 @@ print("[999MS] Fetching payload...")
 -- Stage 4 link: minted by the server while serving this stage, held in the
 -- header table so the marker and the hand-off live in one place.
 local nextSha = "@NEXT_SHA@"
+local nextNonce = "@NONCE@"
 local nextUrl = gamaramam[1]
 -- "NEXT@" without the leading "@" so this guard is never itself replaced.
 if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("NEXT@", 1, true) then
     return Kick("[999MS] Stage link unavailable")
 end
 
+local cryptTable = (getgenv and getgenv().crypt) or crypt
+local hasher = type(cryptTable) == "table" and cryptTable.hash or nil
+if type(hasher) ~= "function" then
+    return Kick("[999MS] Payload hash unavailable")
+end
+
+-- The last link only opens for this stage's own proof, not for a plain fetch.
+local okProof, proof = pcall(hasher, "999MS-fetch-v1|" .. nextNonce .. "|" .. nextUrl, "sha256")
+if not okProof or type(proof) ~= "string" then
+    return Kick("[999MS] Stage proof unavailable")
+end
+
 local ok, response = pcall(HttpRequest, {
     Url = nextUrl,
-    Method = "GET",
+    Method = "POST",
+    Headers = { ["content-type"] = "application/json" },
+    Body = '{"p":"' .. proof .. '"}',
 })
 if not ok or type(response) ~= "table" or response.StatusCode ~= 200 then
     return Kick("[999MS] Payload fetch failed")
@@ -608,12 +623,6 @@ end
 local payloadSrc = response.Body or ""
 if #payloadSrc < 100 then
     return Kick("[999MS] Invalid payload")
-end
-
-local cryptTable = (getgenv and getgenv().crypt) or crypt
-local hasher = type(cryptTable) == "table" and cryptTable.hash or nil
-if type(hasher) ~= "function" then
-    return Kick("[999MS] Payload hash unavailable")
 end
 local okHash, digest = pcall(hasher, payloadSrc, "sha256")
 if not okHash or type(digest) ~= "string" or string.lower(digest) ~= nextSha then

@@ -58,6 +58,7 @@ const stage2 = `${header};${compact(bodySource, 'savecheck.lua')}`;
 if (!/local gamaramam\s*=/.test(stage2)) throw new Error('stage 2 dropped the header table');
 if (!/gamaramam\s*\[/.test(stage2)) throw new Error('body no longer reads the header table');
 if (!stage2.includes('local gamaramam = { "')) throw new Error('body lost the save marker needle');
+if (!stage2.includes('"@NONCE@"')) throw new Error('stage 2 lost the fetch-proof nonce');
 write('loada.lua', stage2);
 console.log('stage 2 (loada)   ', stage2.length, 'bytes  sha256', sha256(stage2));
 
@@ -73,6 +74,7 @@ function splitHeader(source, raw, marker) {
     .trim();
   if (!/^local gamaramam\s*=/.test(header)) throw new Error(`${source}: header must declare gamaramam`);
   if (!/^local gamaramam = \{ "@NEXT@" \}$/.test(header)) throw new Error(`${source}: header must be a one-entry gamaramam table`);
+  if (!raw.includes('"@NONCE@"')) throw new Error(`${source}: body lost the fetch-proof nonce`);
   return { header, body: raw.slice(cut) };
 }
 
