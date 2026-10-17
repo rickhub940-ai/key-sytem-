@@ -33,7 +33,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = '692050da5bba3b0845e9cb0201826ea949a29c10cd413e15fa357a27caef564b';
+const STAGE_TWO_RAW_SHA256 = 'caea9df1abfc709ae37ce82d52d311d01992e399d44207adcbde1542fc2a284d';
 // Capability redemption is additionally tracked for the lifetime of a warm
 // function. The signed capability is the cross-instance authority; the map
 // closes accidental/replayed fetches that return to the same instance.

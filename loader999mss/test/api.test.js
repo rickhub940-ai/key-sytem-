@@ -191,10 +191,13 @@ async function main() {
   const STAGE2 = fs.readFileSync(path.join(__dirname, '..', 'artifacts', 'loada.lua'), 'utf8');
   assert.equal(/supper_Boom|super_boom/i.test(STAGE2), false, 'the old literal is gone');
   assert.equal(STAGE2.includes('__CHAIN_MARKER__'), false, 'the marker is not a serve-time token');
-  assert.match(STAGE2, /local MN0 = "@BASE_URL@\/x\/[a-f0-9]{40}"/,
-    'the marker is a fixed literal with an opaque name at the top of the stage');
-  assert.match(STAGE2, /local marker = MN0/, 'the scanner uses that same variable');
-  assert.equal(/NEXT_LINK/.test(STAGE2), false, 'the variable name must not describe its role');
+  assert.match(STAGE2, /local (?:[A-Za-z_][A-Za-z0-9_]?)="@BASE_URL@\/x\/[a-f0-9]{40}"/,
+    'the marker is a fixed literal bound to a <=2-character local at the top of the stage');
+  const markerName = STAGE2.match(/local ([A-Za-z_][A-Za-z0-9_]?)="@BASE_URL@\/x\/[a-f0-9]{40}"/)[1];
+  assert.equal((STAGE2.match(new RegExp('\\b' + markerName + '\\b', 'g')) || []).length >= 2, true,
+    'the scanner reuses that same local');
+  assert.equal(STAGE2.includes('\n'), false, 'Stage 2 ships as a single line');
+  assert.equal(/NEXT_LINK|local marker/.test(STAGE2), false, 'no descriptive name survives');
   assert.equal(
     require('node:crypto').createHash('sha256').update(STAGE2).digest('hex'),
     fs.readFileSync(path.join(__dirname, '..', 'api', 'auth.js'), 'utf8')
@@ -205,9 +208,15 @@ async function main() {
   const loadc1 = await (await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
     headers: { 'x-roblox-client': 'test' },
   })).text();
-  const cap = loadc1.match(/CAP_D = "([a-f0-9]+)"/);
-  const capN = loadc1.match(/CAP_N = "([a-f0-9]+)"/);
-  const pinned = loadc1.match(/STAGE2_SHA256 = "([a-f0-9]{64})"/)[1];
+  // Compaction keeps the values but renames the locals, so read the four
+  // 64-hex literals in declaration order: chain id, capability pair, pin.
+  const hexes = [...loadc1.matchAll(/"([a-f0-9]{64})"/g)].map((m) => m[1]);
+  assert.equal(hexes.length, 4, 'served loadc declares chain id, capability pair and pin');
+  assert.match(loadc1, /\/loada\.lua\/\"\.\.[A-Za-z_][A-Za-z0-9_]?\.\.\"\/\"\.\.[A-Za-z_][A-Za-z0-9_]?/,
+    'the capability pair is concatenated into the Stage-2 path');
+  const cap = [null, hexes[1]];
+  const capN = [null, hexes[2]];
+  const pinned = hexes[3];
   const stage2 = await (await fetch(`http://127.0.0.1:${port}/loada.lua/${cap[1]}/${capN[1]}`, {
     headers: { 'x-roblox-client': 'test' },
   })).text();
@@ -216,17 +225,16 @@ async function main() {
     pinned,
     'the served Stage 2 must hash to the pin inside the served Stage 1',
   );
-  const hop = stage2.match(/local MN0 = "([^"]+)"/);
-  assert.ok(hop, 'served Stage 2 declares the marker literal');
-  assert.equal(hop[1].includes('@BASE_URL@'), false, 'the host is resolved before serving');
-  assert.ok(stage2.includes('local marker = MN0'), 'scanner still points at the marker');
+  assert.match(stage2, /"https:\/\/[^"\/]+\/x\/[a-f0-9]{40}"/,
+    'served Stage 2 declares the marker literal with the host resolved');
 
   // The same bytes every time: the marker must not be randomised per request.
   const loadc2 = await (await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
     headers: { 'x-roblox-client': 'test' },
   })).text();
-  const cap2 = loadc2.match(/CAP_D = "([a-f0-9]+)"/);
-  const capN2 = loadc2.match(/CAP_N = "([a-f0-9]+)"/);
+  const hexes2 = [...loadc2.matchAll(/"([a-f0-9]{64})"/g)].map((m) => m[1]);
+  const cap2 = [null, hexes2[1]];
+  const capN2 = [null, hexes2[2]];
   const stage2b = await (await fetch(`http://127.0.0.1:${port}/loada.lua/${cap2[1]}/${capN2[1]}`, {
     headers: { 'x-roblox-client': 'test' },
   })).text();

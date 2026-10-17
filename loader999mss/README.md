@@ -154,3 +154,25 @@ local marker = MN0
 | kick แบบ crash แทน `while true do end` | shiawase | มีอยู่แล้ว (`SecureCrash`) |
 
 ลำดับطلب: `/api/verify` (ได้ `hop`, `A`, `B`) → `/api/script` (เผา hop, ตรวจสมการ, คืน `hop` ใหม่ในซองเข้ารหัส) → `/api/script-verify` (เผา hop ใบที่สอง)
+
+
+## 2026-10-17 — ย่อทุก stage: ตัวแปร ≤ 2 ตัว, ไฟล์ละ 1 บรรทัด
+
+`source/*.lua` ยังเป็นเวอร์ชันอ่านออกสำหรับแก้ไข แต่ `node source/build.js` จะย่อด้วย `luamin`
+ก่อนเขียนลง `artifacts/`:
+
+| stage | เดิม | ใหม่ | locals สูงสุด |
+| --- | --- | --- | --- |
+| loadc | 1,575 B | 1,033 B | 1 ตัว |
+| loada | 8,176 B | 4,243 B | 2 ตัว |
+| loader | 20,490 B | 11,188 B | 2 ตัว |
+| payload | 38,102 B | 21,957 B | 2 ตัว |
+
+ทุกไฟล์ที่เสิร์ฟเป็น **1 บรรทัด** และ local ทุกตัวยาวไม่เกิน 2 ตัวอักษร
+(ชื่อ global/field ของ Roblox เช่น `game`, `GetService`, `MS999Chain` เปลี่ยนไม่ได้)
+
+marker ยังเป็น literal ตายตัว: `local a="@BASE_URL@/x/6f2c…"` แล้วผู้ใช้ obfuscate ต่อได้ทั้งไฟล์
+
+ตรวจว่าไม่มีการเปลี่ยนพฤติกรรม: `python3 e2e/ast_compare.py` เทียบ AST ของ source กับ artifact
+(ลบชื่อ local/คอมเมนต์, canonical literal) → MATCH ทั้ง 4 ไฟล์
+ส่วนต่างเดียวคือการตัดวงเล็บ `x + (v - 1)` → `x + v - 1` ซึ่งค่าตรงกัน (ทดสอบ 20k คู่)

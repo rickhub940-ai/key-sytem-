@@ -163,8 +163,8 @@ MS999Signal.OnKick:Connect(function(reason)
     if NfCrash then NfCrash() else while true do end end
 end)
 
-MS999Signal.OnLog:Connect(function(type, data)
-    local detail = tostring(type) .. ":" .. tostring(data and data.path or data or "")
+MS999Signal.OnLog:Connect(function(kind, data)
+    local detail = tostring(kind) .. ":" .. tostring(data and data.path or data or "")
     print("[999MS][LOG]", makeKickCode(detail))
 end)
 
