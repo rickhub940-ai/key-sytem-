@@ -108,22 +108,22 @@ function consume(token, now = Date.now()) {
   return claim;
 }
 
-// A stage token is spent when its body is delivered, but the same token may
-// ask for one follow-up link (that is how the next stage is created on
-// demand). The map is per instance and bounded by the token TTL.
-const pickedUp = new Map();
-
-function claimPickup(token, want, now = Date.now()) {
+// The next link is derived from the token that was just redeemed, so the whole
+// chain can be rendered (and hashed) the moment any stage is served. Nothing is
+// stored: the same token always derives the same next link.
+function deriveNext(token, now = Date.now()) {
   const claim = resolveToken(token, now);
   if (!claim) return null;
-  if (NEXT_STAGE[claim.stage] !== want) return null;
-  for (const [key, expiresAt] of pickedUp) {
-    if (expiresAt <= now) pickedUp.delete(key);
-  }
-  const key = `${claim.chainId}:${claim.stage}`;
-  if (pickedUp.has(key)) return null;
-  pickedUp.set(key, claim.exp);
-  return claim;
+  const nextStage = NEXT_STAGE[claim.stage];
+  if (!nextStage) return null;
+
+  const chainId = crypto
+    .createHmac('sha256', chainSecret())
+    .update(`999MS-next-v1|${token}`)
+    .digest('hex')
+    .slice(0, 32);
+  const exp = claim.exp + linkTtlMs();
+  return { chainId, stage: nextStage, exp, token: tokenFor(nextStage, chainId, exp) };
 }
 
 module.exports = {
@@ -133,8 +133,8 @@ module.exports = {
   tokenFor,
   resolveToken,
   verifyToken,
+  deriveNext,
   consume,
-  claimPickup,
   isTokenShape,
   linkTtlMs,
 };

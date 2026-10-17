@@ -54,7 +54,6 @@ function route(req) {
     '/api/control/bans': ['control-bans'],
     '/api/control/traffic': ['control-traffic'],
     '/api/control/events': ['control-events'],
-    '/api/stage-pickup': ['stage-pickup'],
     '/api/verify': ['verify'],
     '/api/script': ['script'],
     '/api/script-verify': ['script-verify'],

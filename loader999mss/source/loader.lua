@@ -1,4 +1,10 @@
 -- ===========================================================
+-- Stage 3: anti-checks, then the hand-off to Stage 4.
+local gamaramam = {
+    "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904",
+    "@NEXT@",
+}
+-- ═══ BODY ═══ everything below is compacted at build time.
 -- 999MS Bootstrap + Anti (Signal-based + T-RAWSET)
 -- Anti-Save ตามไฟล์ X 100%
 -- ===========================================================
@@ -583,18 +589,13 @@ print("[999MS] Anti-checks passed")
 
 -- ═══ โหลด payload ═══
 print("[999MS] Fetching payload...")
--- Ask the server for a Stage-4 link, minted at this moment.
+-- Stage 4 link: minted by the server while serving this stage, held in the
+-- header table so the marker and the hand-off live in one place.
 local nextSha = "@NEXT_SHA@"
-local own = (getgenv and getgenv().MS999Link) or ""
-
-local okLink, nextToken = pcall(function()
-    return game:HttpGet(BASE_URL .. "/api/stage-pickup?t=" .. own .. "&want=payload")
-end)
-if not okLink or type(nextToken) ~= "string" or #nextToken < 40 then
+local nextUrl = gamaramam[2]
+if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("@NEXT@", 1, true) then
     return Kick("[999MS] Stage link unavailable")
 end
-
-local nextUrl = BASE_URL .. "/" .. nextToken
 
 local ok, response = pcall(HttpRequest, {
     Url = nextUrl,

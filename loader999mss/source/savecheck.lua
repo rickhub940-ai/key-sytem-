@@ -4,7 +4,7 @@
 -- literal (marker) and the request for the next stage link.
 local gamaramam = {
     "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904",
-    "@BASE_URL@/api/stage-pickup?t=",
+    "@NEXT@",
 }
 -- ═══ BODY ═══ everything below is compacted at build time.
 local Players = game:GetService("Players")
@@ -240,19 +240,13 @@ if type(requestFn) ~= "function" then
     return Kick("[999MS] HTTP not supported")
 end
 
--- Ask the server for a Stage-3 link. It is minted now, so it is valid for ten
--- seconds from this call rather than from when this stage was fetched.
+-- The server mints the Stage-3 link while serving this stage and writes it
+-- into the header table above; it is valid for ten seconds from that moment.
 local nextSha = "@NEXT_SHA@"
-local own = (env and env.MS999Link) or ""
-
-local okLink, nextToken = pcall(function()
-    return game:HttpGet(BASE_URL .. "/api/stage-pickup?t=" .. own .. "&want=loader")
-end)
-if not okLink or type(nextToken) ~= "string" or #nextToken < 40 then
+local nextUrl = gamaramam[2]
+if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("@NEXT@", 1, true) then
     return Kick("[999MS] Stage link unavailable")
 end
-
-local nextUrl = BASE_URL .. "/" .. nextToken
 
 local ok, response = pcall(requestFn, {
     Url = nextUrl,

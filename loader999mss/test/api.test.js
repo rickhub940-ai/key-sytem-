@@ -217,8 +217,8 @@ async function main() {
   assert.match(STAGE2, /^local gamaramam = \{/, 'the header table opens the stage');
   assert.ok(STAGE2.includes(`"@BASE_URL@/x/${'6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904'}"`),
     'the marker literal is the first entry');
-  assert.ok(STAGE2.includes('"@BASE_URL@/api/stage-pickup?t="'),
-    'the next-stage link prefix is the second entry');
+  assert.ok(STAGE2.includes('"@NEXT@"'),
+    'the next-stage link slot is the second entry');
   assert.ok(/gamaramam\s*\[/.test(STAGE2), 'the body reads the table instead of copying it');
   assert.equal((STAGE2.match(/gamaramam/g) || []).length >= 3, true,
     'the name survives compaction');
@@ -259,60 +259,38 @@ async function main() {
   assert.notEqual((await fetch(stage2Url, { redirect: 'manual' })).status, 200,
     'a burned Stage-2 link is never served twice');
 
-  // ── Stage 3 link is created on demand, not embedded ──
-  assert.equal(/loader\.lua/.test(stage2), false, 'Stage 2 names no next artifact');
-  assert.ok(stage2.includes('/api/stage-pickup'), 'Stage 2 asks the server for its link');
-  const stage2Token = tokenOf(stage2Url);
-  const pickup = async (token, want) => fetch(
-    `http://127.0.0.1:${port}/api/stage-pickup?t=${encodeURIComponent(token)}&want=${want}`,
-    { redirect: 'manual' },
-  );
-  const loaderRes = await pickup(stage2Token, 'loader');
-  assert.equal(loaderRes.status, 200, 'pickup mints the Stage-3 link');
-  const loaderToken = await loaderRes.text();
-  assert.match(loaderToken, TOKEN);
-  assert.equal(/loada|loader|payload/.test(loaderToken), false,
-    'the token does not reveal which stage it opens');
-  assert.notEqual((await pickup(stage2Token, 'loader')).status, 200,
-    'a token yields exactly one pickup');
+  // ── The next link is minted while serving and embedded in the body ──
+  // No lookup endpoint exists: the only way to advance is the link in the body.
+  const LINK = /https?:\/\/127\.0\.0\.1:\d+\/[a-f0-9]{32}\.[0-9]{13}\.[a-f0-9]{32}/;
+  assert.equal(/stage-pickup/.test(stage2), false, 'Stage 2 names no pickup endpoint');
+  const stage3Url = (stage2.match(LINK) || [])[0];
+  assert.ok(stage3Url, 'Stage 2 carries a freshly minted Stage-3 link');
+  assert.equal(stage3Url.includes('loada') || stage3Url.includes('loader') || stage3Url.includes('payload'),
+    false, 'the link does not name its stage');
 
-  // The wrong neighbour is refused, and the link works exactly once.
-  assert.notEqual((await pickup(stage2Token, 'payload')).status, 200,
-    'a Stage-2 token cannot ask for Stage 4');
-  const stage3Res = await fetch(`http://127.0.0.1:${port}/${loaderToken}`, { redirect: 'manual' });
+  const stage3Res = await fetch(stage3Url, { headers: { 'x-roblox-client': 'test' } });
   assert.equal(stage3Res.status, 200, 'Stage 3 link works');
   const stage3 = await stage3Res.text();
-  assert.notEqual((await fetch(`http://127.0.0.1:${port}/${loaderToken}`, { redirect: 'manual' })).status,
-    200, 'Stage 3 link is single use');
+  assert.equal(/stage-pickup/.test(stage3), false, 'Stage 3 names no pickup endpoint');
+  assert.notEqual((await fetch(stage3Url, { redirect: 'manual' })).status, 200,
+    'Stage 3 link is single use');
 
-  // Stage 4 the same way.
-  assert.equal(/payload\.lua/.test(stage3), false, 'Stage 3 names no next artifact');
-  assert.ok(stage3.includes('/api/stage-pickup'), 'Stage 3 asks the server for its link');
-  const payloadRes = await pickup(loaderToken, 'payload');
-  assert.equal(payloadRes.status, 200, 'pickup mints the Stage-4 link');
-  const payloadToken = await payloadRes.text();
-  assert.match(payloadToken, TOKEN);
-  const stage4Res = await fetch(`http://127.0.0.1:${port}/${payloadToken}`, { redirect: 'manual' });
+  const stage4Url = (stage3.match(LINK) || [])[0];
+  assert.ok(stage4Url, 'Stage 3 carries a freshly minted Stage-4 link');
+  const stage4Res = await fetch(stage4Url, { headers: { 'x-roblox-client': 'test' } });
   assert.equal(stage4Res.status, 200, 'Stage 4 link works');
   const stage4 = await stage4Res.text();
   assert.ok(stage4.length > 1000, 'payload body arrived');
+  assert.equal(LINK.test(stage4), false, 'the payload is the end of the chain');
+  assert.equal(new Set([tokenOf(stage2Url), tokenOf(stage3Url), tokenOf(stage4Url)]).size, 3,
+    'every link in a run is different');
 
-  // Each pickup returns a brand-new link, never a cached one.
-  const run2Stage2 = await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
-    headers: { 'x-roblox-client': 'test' },
-  });
-  const run2Token = tokenOf(run2Stage2.headers.get('x-999ms-stage2'));
-  const loader2 = await (await pickup(run2Token, 'loader')).text();
-  assert.notEqual(loader2, loaderToken, 'every pickup mints a different link');
-  assert.notEqual(run2Token, stage2Token, 'every Stage-1 response mints a different link');
-
-  // Expired and forged links are refused.
-  const expired = chainLinks.tokenFor('loada', 'a'.repeat(32), Date.now() - 1000);
-  assert.notEqual((await fetch(`http://127.0.0.1:${port}/${expired}`, { redirect: 'manual' })).status,
-    200, 'an expired link is refused');
-  const forged = chainLinks.tokenFor('loada', 'b'.repeat(32), Date.now() + 5000).replace(/.$/, '0');
-  assert.notEqual((await fetch(`http://127.0.0.1:${port}/${forged}`, { redirect: 'manual' })).status,
-    200, 'a link with a bad signature is refused');
+  // The old lookup route is gone.
+  const pickupGone = await fetch(
+    `http://127.0.0.1:${port}/api/stage-pickup?t=${tokenOf(stage2Url)}&want=loader`,
+    { redirect: 'manual' },
+  );
+  assert.notEqual(pickupGone.status, 200, 'there is no stage-pickup endpoint any more');
 
   // Two runs never share links, and Stage 1 is re-obfuscated each time.
   const loadc2 = await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
