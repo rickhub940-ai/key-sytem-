@@ -125,6 +125,40 @@ async function main() {
   assert.equal(/WebSocket|websocket|realtime|Realtime/i.test(mainLua), false,
     'main.lua must not reference the realtime system');
 
+  // ── loader links (somtank-style random namespace + token) ──
+  const linkDenied = await post('/api/link', {});
+  assert.equal(linkDenied.status, 401);
+
+  const created = await post('/api/link', { scriptName: 'main', hours: 2 }, { 'x-admin-token': env.ADMIN_TOKEN });
+  assert.equal(created.status, 200);
+  const linkBody = await created.json();
+  assert.equal(linkBody.ok, true);
+  assert.match(linkBody.path, /^\/x\/[a-f0-9]{40}$/, 'link path must be 40 random hex');
+  assert.match(linkBody.url, /^http[^?]+\/x\/[a-f0-9]{40}\?at=[0-9a-z]+\.[A-Za-z0-9_-]{32}$/);
+  assert.match(linkBody.line, /^loadstring\(game:HttpGet\("/);
+  assert.match(linkBody.sha256, /^[a-f0-9]{64}$/);
+  assert.ok(linkBody.stub.includes(linkBody.url), 'stub carries the link');
+  assert.ok(linkBody.stub.includes(linkBody.sha256), 'stub pins the hash');
+
+  const linkPathAndQuery = new URL(linkBody.url).pathname + new URL(linkBody.url).search;
+  const linkRes = await fetch(`http://127.0.0.1:${port}${linkPathAndQuery}`, {
+    headers: { 'x-roblox-client': 'test' },
+  });
+  assert.equal(linkRes.status, 200);
+  const entry = await linkRes.text();
+  const crypto = require('node:crypto');
+  assert.equal(crypto.createHash('sha256').update(entry).digest('hex'), linkBody.sha256,
+    'served entry must hash to the pinned value');
+  assert.ok(entry.includes('/loadc.lua'), 'entry hands over to the chain');
+
+  const tampered = await fetch(`http://127.0.0.1:${port}${linkBody.path}?at=${'0'.repeat(8)}.${'a'.repeat(32)}`, {
+    redirect: 'manual',
+  });
+  assert.ok(tampered.status >= 300, 'a bad token must not serve the entry');
+
+  const second = await (await post('/api/link', { scriptName: 'main' }, { 'x-admin-token': env.ADMIN_TOKEN })).json();
+  assert.notEqual(second.path, linkBody.path, 'every link gets its own random namespace');
+
   console.log('PASS API without realtime');
 }
 

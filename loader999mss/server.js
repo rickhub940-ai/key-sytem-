@@ -52,6 +52,7 @@ function route(req) {
     '/loader.lua': ['artifact', 'loader'],
     '/999MS-sdk.lua': ['artifact', 'sdk'],
     '/api/health': ['health'],
+    '/api/link': ['link-create'],
     '/api/control/bans': ['control-bans'],
     '/api/control/traffic': ['control-traffic'],
     '/api/verify': ['verify'],
@@ -61,13 +62,18 @@ function route(req) {
     '/api/start': ['start'],
     '/api/admin/ban': ['admin-ban'],
   };
-  const match = url.pathname.match(/^\/loada\.lua\/([^/]+)\/([^/]+)$/);
+  const linkMatch = url.pathname.match(/^\/x\/([a-f0-9]{40})$/);
+  if (linkMatch) {
+    query.action = 'link-serve';
+    query.p = linkMatch[1];
+  }
+  const match = !linkMatch && url.pathname.match(/^\/loada\.lua\/([^/]+)\/([^/]+)$/);
   if (match) {
     query.action = 'artifact';
     query.name = 'loada';
     query.d = match[1];
     query.n = match[2];
-  } else {
+  } else if (!linkMatch) {
     const mapped = routes[url.pathname] || ['trap'];
     query.action = mapped[0];
     if (mapped[1]) query.name = mapped[1];

@@ -4,6 +4,7 @@ const path = require('node:path');
 
 const { verifyKey, createLink } = require('../lib/platoboost');
 const { issueTicket, verifyTicket, hashHwid } = require('../lib/ticket');
+const link = require('../lib/link');
 const {
   createChallengeResponse,
   validateClientChallenge,
@@ -213,6 +214,54 @@ const CONTROL_ACTIONS = new Set(['control-bans', 'control-traffic']);
 const trafficLog = [];
 const TRAFFIC_MAX = 200;
 
+// ═══ /api/link (admin) ═══
+// Creates one random, expiring loader link: /x/<40 hex>?at=<token>.
+async function handleLinkCreate(req, res) {
+  if (!hasAdminAccess(req)) return res.status(401).json({ ok: false, reason: 'unauthorized' });
+
+  const body = req.body || {};
+  const scriptName = link.normalizeScriptName(body.scriptName) || 'main';
+  const hours = Math.min(Math.max(Number(body.hours) || 168, 1), 24 * 365);
+  const origin = requestOrigin(req) || publicBaseUrl();
+  if (!origin) return res.status(503).json({ ok: false, reason: 'origin unavailable' });
+
+  const linkPath = link.randomLinkPath();
+  const expiresAt = Date.now() + hours * 60 * 60 * 1000;
+  const token = link.issuePathToken({ path: linkPath, expiresAt });
+  if (!token) return res.status(503).json({ ok: false, reason: 'LINK_SECRET/TICKET_SECRET missing' });
+
+  const entry = link.renderEntryBody({ baseUrl: origin, path: linkPath, token });
+  const digest = link.sha256(entry);
+  const url = `${origin}/x/${linkPath}?at=${token}`;
+
+  return res.status(200).json({
+    ok: true,
+    id: link.linkId(linkPath),
+    path: `/x/${linkPath}`,
+    url,
+    line: `loadstring(game:HttpGet("${url}"))()`,
+    sha256: digest,
+    scriptName,
+    expiresAt,
+    stub: link.renderStub({ baseUrl: origin, path: linkPath, token, sha256: digest, scriptName, expiresAt }),
+  });
+}
+
+// ═══ /x/<40 hex> ═══
+// Serves the deterministic entry script for a link, then the normal chain.
+async function handleLinkServe(req, res, url) {
+  const linkPath = req.query?.p || url.searchParams.get('p') || '';
+  const token = url.searchParams.get('at') || req.query?.at || '';
+  if (!link.isLinkPath(linkPath)) return rejectOrTrap(req, res);
+  const claim = link.verifyPathToken(token, linkPath);
+  if (!claim) return rejectOrTrap(req, res);
+  const origin = requestOrigin(req) || publicBaseUrl();
+  if (!origin) return res.status(503).send('');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).send(link.renderEntryBody({ baseUrl: origin, path: linkPath, token }));
+}
+
 module.exports = async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
   const action = req.query?.action || url.searchParams.get('action');
@@ -300,6 +349,21 @@ module.exports = async function handler(req, res) {
       scope: 'instance',
       note: 'In-memory revocations apply to this function instance; env REVOKED_* entries apply everywhere.',
     });
+  }
+
+  // Link system: /x/<40 hex>?at=<token> serves the entry script and
+  // /api/link (admin) mints a new random link.
+  if (action === 'link-serve') {
+    if (req.method !== 'GET') return rejectOrTrap(req, res, 405);
+    return await handleLinkServe(req, res, url);
+  }
+
+  if (action === 'link-create') {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    if (req.method !== 'POST') return res.status(405).json({ ok: false, reason: 'method' });
+    if (trapBrowserArtifacts() && isBrowserRequest(req)) return trapRedirect(res);
+    return await handleLinkCreate(req, res);
   }
 
   if (action === 'trap') return rejectOrTrap(req, res);

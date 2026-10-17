@@ -200,6 +200,52 @@
   <div class="grid">
     <div class="stack">
       <section class="card">
+        <div class="card-h">
+          <h2>สร้างลิงก์โหลด</h2>
+          <span class="spacer"></span>
+          <span class="pill hide-sm">พาธสุ่ม 40 hex · token หมดอายุ</span>
+        </div>
+        <div class="card-b stack">
+          <p class="hint">ลิงก์แบบsomtank: <span class="mono">/x/&lt;40 hex สุ่ม&gt;?at=&lt;token&gt;</span> — แต่ละลิงก์มี namespace ของตัวเอง ไม่ซ้ำกัน และหมดอายุได้</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:140px">
+              <label for="linkScript">ชื่อสคริปต์</label>
+              <input id="linkScript" value="main" spellcheck="false" />
+            </div>
+            <div style="flex:1;min-width:120px">
+              <label for="linkHours">อายุ (ชั่วโมง)</label>
+              <input id="linkHours" type="number" min="1" max="8760" value="168" />
+            </div>
+          </div>
+          <button class="btn" id="linkBtn" type="button">สร้างลิงก์</button>
+          <div id="linkOut" class="hide">
+            <div style="border-top:1px solid var(--line);padding-top:12px" class="stack">
+              <div>
+                <label>ลิงก์</label>
+                <div style="display:flex;gap:8px">
+                  <input id="linkUrl" readonly class="mono" style="flex:1" />
+                  <button class="btn btn-sm" type="button" data-copy="linkUrl">คัดลอก</button>
+                </div>
+              </div>
+              <div>
+                <label>บรรทัดสำหรับ executor</label>
+                <div style="display:flex;gap:8px">
+                  <input id="linkLine" readonly class="mono" style="flex:1" />
+                  <button class="btn btn-sm" type="button" data-copy="linkLine">คัดลอก</button>
+                </div>
+              </div>
+              <div>
+                <label>สคริปต์เต็ม (มี hash ตรวจสอบ)</label>
+                <textarea id="linkStub" readonly rows="8" class="mono" style="width:100%;font-size:.76rem"></textarea>
+                <button class="btn btn-sm" type="button" data-copy="linkStub">คัดลอกสคริปต์เต็ม</button>
+              </div>
+              <p class="hint" id="linkMeta" style="margin:0"></p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
         <div class="card-h"><h2>บันทึกการทำงาน</h2><span class="spacer"></span>
           <button class="btn btn-sm btn-ghost" id="clearLog" type="button">ล้าง</button>
         </div>
@@ -444,6 +490,48 @@
       return '<div class="ban-item"><span>' + esc(pair[0]) + '</span><b style="font-weight:500">' + esc(pair[1]) + '</b></div>';
     }).join('');
   }
+
+  /* ── link generator ── */
+  $('linkBtn').addEventListener('click', function () {
+    var scriptName = ($('linkScript').value || 'main').trim();
+    var hours = Number($('linkHours').value) || 168;
+    var btn = $('linkBtn');
+    btn.disabled = true;
+    api('/api/link', { scriptName: scriptName, hours: hours }).then(function (result) {
+      btn.disabled = false;
+      var data = result.data || {};
+      if (result.status !== 200 || !data.ok) {
+        toast(data.reason || 'สร้างลิงก์ไม่สำเร็จ', 'err');
+        return;
+      }
+      $('linkOut').classList.remove('hide');
+      $('linkUrl').value = data.url || '';
+      $('linkLine').value = data.line || '';
+      $('linkStub').value = data.stub || '';
+      $('linkMeta').textContent = 'id ' + (data.id || '') + ' · sha256 ' + String(data.sha256 || '').slice(0, 16) +
+        '… · หมดอายุ ' + new Date(data.expiresAt).toLocaleString('th-TH');
+      logLine('สร้างลิงก์ ' + (data.id || ''), 'ok');
+      toast('สร้างลิงก์แล้ว', 'ok');
+    }).catch(function () {
+      btn.disabled = false;
+      toast('เรียกเซิร์ฟเวอร์ไม่ได้', 'err');
+    });
+  });
+
+  document.addEventListener('click', function (event) {
+    var btn = event.target.closest('button[data-copy]');
+    if (!btn) return;
+    var field = $(btn.getAttribute('data-copy'));
+    if (!field) return;
+    field.select();
+    field.setSelectionRange(0, 99999);
+    var done = function () { toast('คัดลอกแล้ว', 'ok'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(field.value).then(done).catch(done);
+    } else {
+      try { document.execCommand('copy'); done(); } catch (e) { toast('คัดลอกไม่ได้', 'err'); }
+    }
+  });
 
   /* ── manual ban form ── */
   $('banBtn').addEventListener('click', function () {

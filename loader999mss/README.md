@@ -91,3 +91,18 @@ session (`sessionId`, `idleMs`) และสั่ง `notice` ถึง client 
 - ไม่มี `/api/realtime-ticket`, `/api/realtime/*`, `/api/session-renew`, `/admin`
 - แผงควบคุม `/control` เป็น HTTP ล้วน: health + bans + traffic
 - ไม่มีบริการ Render / repo gateway ในระบบอีก
+
+## ระบบลิงก์โหลดแบบ somtank (2026-10-17)
+
+ลิงก์มี namespace สุ่มยาวของตัวเอง ไม่ใช้ชื่อคงที่อีกต่อไป:
+
+```
+https://<host>/x/<40 hex สุ่ม>?at=<exp base36>.<sig 32 ตัว>
+```
+
+- `POST /api/link` (ต้อง `x-admin-token`) → `{ url, line, sha256, stub, expiresAt, path, id }`
+- `GET /x/<40 hex>?at=<token>` → เสิร์ฟ entry script ที่ **ไบต์คงที่ต่อลิงก์** จึง pin `sha256` ได้แบบ somtank
+- token เป็น HMAC (stateless) หมดอายุตาม `hours` (1–8760) ไม่ต้องมีฐานข้อมูล
+- entry script ต่อเข้า `/loadc.lua` บน host เดิม → chain เดิมทั้งหมด
+- `LINK_SECRET` = ค่าสุ่มยาว 64 hex (ตั้งใน Vercel production แล้ว) ถ้าไม่มีจะใช้ `TICKET_SECRET`
+- แผง `/control` มีการ์ด **สร้างลิงก์โหลด** + ปุ่มคัดลอก (ลิงก์ / บรรทัด executor / สคริปต์เต็ม)
