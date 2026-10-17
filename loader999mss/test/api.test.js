@@ -163,9 +163,10 @@ async function main() {
   const STAGE2 = fs.readFileSync(path.join(__dirname, '..', 'artifacts', 'loada.lua'), 'utf8');
   assert.equal(/supper_Boom|super_boom/i.test(STAGE2), false, 'the old literal is gone');
   assert.equal(STAGE2.includes('__CHAIN_MARKER__'), false, 'the marker is not a serve-time token');
-  assert.match(STAGE2, /local NEXT_LINK = "@BASE_URL@\/x\/[a-f0-9]{40}"/,
-    'the marker is a fixed next-hop literal at the top of the stage');
-  assert.match(STAGE2, /local marker = NEXT_LINK/, 'the scanner uses that same variable');
+  assert.match(STAGE2, /local MN0 = "@BASE_URL@\/x\/[a-f0-9]{40}"/,
+    'the marker is a fixed literal with an opaque name at the top of the stage');
+  assert.match(STAGE2, /local marker = MN0/, 'the scanner uses that same variable');
+  assert.equal(/NEXT_LINK/.test(STAGE2), false, 'the variable name must not describe its role');
   assert.equal(
     require('node:crypto').createHash('sha256').update(STAGE2).digest('hex'),
     fs.readFileSync(path.join(__dirname, '..', 'api', 'auth.js'), 'utf8')
@@ -187,10 +188,10 @@ async function main() {
     pinned,
     'the served Stage 2 must hash to the pin inside the served Stage 1',
   );
-  const hop = stage2.match(/local NEXT_LINK = "([^"]+)"/);
-  assert.ok(hop, 'served Stage 2 declares the hop literal');
+  const hop = stage2.match(/local MN0 = "([^"]+)"/);
+  assert.ok(hop, 'served Stage 2 declares the marker literal');
   assert.equal(hop[1].includes('@BASE_URL@'), false, 'the host is resolved before serving');
-  assert.ok(stage2.includes(`local marker = NEXT_LINK`), 'scanner still points at the hop');
+  assert.ok(stage2.includes('local marker = MN0'), 'scanner still points at the marker');
 
   // The same bytes every time: the marker must not be randomised per request.
   const loadc2 = await (await fetch(`http://127.0.0.1:${port}/loadc.lua`, {

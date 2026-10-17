@@ -1,10 +1,5 @@
 -- Stage 2: remove dumped copies of this checker, then terminate.
---
--- Chain handover constant. The next hop is resolved from BASE_URL at run time;
--- the literal below is the only thing this stage needs from the hop table, so
--- everything after it can be protected/obfuscated as one block without touching
--- the handover.
-local NEXT_LINK = "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904"
+local MN0 = "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904"
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
@@ -102,8 +97,8 @@ local function removeMarkedFiles()
         return false
     end
 
-    -- Same literal that heads this stage, so a saved copy is traceable.
-    local marker = NEXT_LINK
+    -- Trace how this build was copied: match the guard literal itself.
+    local marker = MN0
     local pending = { "." }
     local seen = {}
     local matches = {}

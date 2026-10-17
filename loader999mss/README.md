@@ -124,13 +124,12 @@ MS9MARK_<64 hex>   ← HMAC_SHA256(secret, '999MS chain marker v1')
 
 ## 2026-10-17 — marker ตรวจการเซฟซอร์ส = ค่าตายตัว (พร้อม obfuscate)
 
-เปลี่ยนจาก `-- supper_Boom` เป็น **ตัวแปรค่าตายตัว** ที่อยู่บนสุดของ Stage 2 และดูเหมือน
-ค่าคงที่สำหรับลิงก์ถัดไป:
+เปลี่ยนจาก `-- supper_Boom` เป็น **ตัวแปรค่าตายตัว** ชื่อกลาง ๆ ที่ไม่บ่งบอกหน้าที่:
 
 ```lua
-local NEXT_LINK = "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904"
+local MN0 = "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904"
 ...
-local marker = NEXT_LINK
+local marker = MN0
 ```
 
 - ไม่มีการแทนค่าตอนเสิร์ฟแล้ว (ไม่มี token `__CHAIN_MARKER__` / `MS9MARK_...` อีก)
