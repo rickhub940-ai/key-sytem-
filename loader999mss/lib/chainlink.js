@@ -1,22 +1,27 @@
 'use strict';
 
 /**
- * Per-run stage links.
+ * On-demand stage links.
  *
- * A single /loadc.lua request mints one chain id and one link per stage. All
- * links share an expiry (10 s by default) counted from that request, so the
- * whole 4-stage run has to finish inside the window.
+ *   /loadc.lua  ──►  https://host/<token>  ──►  https://host/<token>  ──►  https://host/<token>
+ *                     (Stage 2)                 (Stage 3)                 (Stage 4)
  *
- *   loadc -> loada -> loader -> payload
+ * Only the entry script carries a file name. Every later stage is reached
+ * through a bare, opaque token, so a link says nothing about what it serves.
  *
- * Every link is `<chainId>.<stage>.<exp>.<hmac>`: stateless, so a run may hit
- * four different serverless instances without a database, while a link still
- * cannot be forged or re-pointed at another stage.
+ * Token layout: `<chainId>.<exp>.<sig>`
+ *   chainId  16 random bytes (32 hex), fresh for every minted link
+ *   exp      epoch milliseconds, the link dies after TTL
+ *   sig      HMAC-SHA256(secret, "999MS-link-v2|<stage>|<chainId>|<exp>")[:32]
+ *
+ * The stage is inside the signature only, never in the token, so the server
+ * resolves it by testing the token against each stage.
  */
 
 const crypto = require('node:crypto');
 
 const STAGES = ['loada', 'loader', 'payload'];
+const NEXT_STAGE = Object.freeze({ loada: 'loader', loader: 'payload' });
 const DEFAULT_TTL_MS = 10_000;
 
 function chainSecret() {
@@ -35,14 +40,14 @@ function linkTtlMs() {
 function sign(chainId, stage, exp) {
   return crypto
     .createHmac('sha256', chainSecret())
-    .update(`999MS-link-v1|${chainId}|${stage}|${exp}`)
+    .update(`999MS-link-v2|${stage}|${chainId}|${exp}`)
     .digest('hex')
     .slice(0, 32);
 }
 
-function tokenFor(chainId, stage, exp) {
+function tokenFor(stage, chainId, exp) {
   if (!STAGES.includes(stage)) throw new Error('unknown stage: ' + stage);
-  return `${chainId}.${stage}.${exp}.${sign(chainId, stage, exp)}`;
+  return `${chainId}.${exp}.${sign(chainId, stage, exp)}`;
 }
 
 // One fresh link, minted at the moment a stage is served or picked up.
@@ -52,41 +57,47 @@ function mintLink(stage, now = Date.now(), budgetMs = 0) {
   if (!chainSecret() || !STAGES.includes(stage)) return null;
   const chainId = crypto.randomBytes(16).toString('hex');
   const exp = now + linkTtlMs() + Math.max(0, Math.floor(budgetMs));
-  return { chainId, stage, exp, token: tokenFor(chainId, stage, exp) };
+  return { chainId, stage, exp, token: tokenFor(stage, chainId, exp) };
 }
 
-function verifyToken(token, stage, now = Date.now()) {
-  if (!chainSecret()) return null;
-  if (typeof token !== 'string' || token.length > 200) return null;
+function isTokenShape(token) {
+  return typeof token === 'string' && /^[a-f0-9]{32}\.\d{13}\.[a-f0-9]{32}$/.test(token);
+}
 
-  const parts = token.split('.');
-  if (parts.length !== 4) return null;
-  const [chainId, tokenStage, expRaw, signature] = parts;
+// Resolve which stage a bare token belongs to. The stage is not written in the
+// token, so it is recovered by checking the signature against each stage.
+function resolveToken(token, now = Date.now()) {
+  if (!chainSecret() || !isTokenShape(token)) return null;
 
-  if (!/^[a-f0-9]{32}$/.test(chainId)) return null;
-  if (tokenStage !== stage || !STAGES.includes(tokenStage)) return null;
-  if (!/^\d{13}$/.test(expRaw)) return null;
-
+  const [chainId, expRaw, signature] = token.split('.');
   const exp = Number(expRaw);
   if (!Number.isSafeInteger(exp)) return null;
   if (exp <= now) return null;
   // A link may never be minted further ahead than one window.
   if (exp > now + 120_000) return null;
 
-  const expected = Buffer.from(sign(chainId, tokenStage, exp), 'utf8');
   const supplied = Buffer.from(signature, 'utf8');
-  if (supplied.length !== expected.length) return null;
-  if (!crypto.timingSafeEqual(supplied, expected)) return null;
+  for (const stage of STAGES) {
+    const expected = Buffer.from(sign(chainId, stage, exp), 'utf8');
+    if (supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected)) {
+      return { chainId, stage, exp };
+    }
+  }
+  return null;
+}
 
-  return { chainId, stage: tokenStage, exp };
+// Kept for callers that already know the stage (tests, tooling).
+function verifyToken(token, stage, now = Date.now()) {
+  const claim = resolveToken(token, now);
+  return claim && claim.stage === stage ? claim : null;
 }
 
 // One link is good for one fetch on this instance. Expiry already bounds a
 // replay to 10 s; this closes that window where the instance is the same.
 const usedLinks = new Map();
 
-function consume(token, stage, now = Date.now()) {
-  const claim = verifyToken(token, stage, now);
+function consume(token, now = Date.now()) {
+  const claim = resolveToken(token, now);
   if (!claim) return null;
   for (const [key, expiresAt] of usedLinks) {
     if (expiresAt <= now) usedLinks.delete(key);
@@ -102,9 +113,10 @@ function consume(token, stage, now = Date.now()) {
 // demand). The map is per instance and bounded by the token TTL.
 const pickedUp = new Map();
 
-function claimPickup(token, stage, now = Date.now()) {
-  const claim = verifyToken(token, stage, now);
+function claimPickup(token, want, now = Date.now()) {
+  const claim = resolveToken(token, now);
   if (!claim) return null;
+  if (NEXT_STAGE[claim.stage] !== want) return null;
   for (const [key, expiresAt] of pickedUp) {
     if (expiresAt <= now) pickedUp.delete(key);
   }
@@ -115,5 +127,14 @@ function claimPickup(token, stage, now = Date.now()) {
 }
 
 module.exports = {
-  STAGES, mintLink, tokenFor, verifyToken, consume, claimPickup, linkTtlMs,
+  STAGES,
+  NEXT_STAGE,
+  mintLink,
+  tokenFor,
+  resolveToken,
+  verifyToken,
+  consume,
+  claimPickup,
+  isTokenShape,
+  linkTtlMs,
 };

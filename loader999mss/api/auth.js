@@ -34,7 +34,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = '40bf2e2d8bdc8647d6e26316c03187ab91a4e720106c79fd914efbfd67b4bfaa';
+const STAGE_TWO_RAW_SHA256 = '15cd04af3f861c17f84695ac868b105fd04df812efb6dc1a0ee64e4fe4418033';
 
 // ═══ Rate limit ═══
 const rateLimit = new Map();
@@ -467,16 +467,18 @@ async function serveArtifact(req, res, name, url, origin) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('x-999ms-obf', obfuscated.method);
     if (process.env.CHAIN_DEBUG === '1') {
-      res.setHeader('x-999ms-stage2', `${baseUrl}/loada.lua/${link.token}`);
+      res.setHeader('x-999ms-stage2', `${baseUrl}/${link.token}`);
     }
     return res.status(200).send(obfuscated.body);
   }
 
-  // Stages 2-4: each is reached through a one-time link minted on demand.
-  if (name === 'loada' || name === 'loader' || name === 'payload') {
+  // Stages 2-4: reached through a bare `https://host/<token>` link. The token
+  // carries no file name; the stage is recovered from its signature.
+  if (name === 'stage') {
     const token = req.query?.t || url.searchParams.get('t');
-    if (!chainLinks.consume(token, name)) return rejectOrTrap(req, res);
-    const body = stageBody(name, baseUrl);
+    const claim = chainLinks.consume(token);
+    if (!claim) return rejectOrTrap(req, res);
+    const body = stageBody(claim.stage, baseUrl);
     if (typeof body !== 'string') return res.status(503).send('');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
@@ -508,13 +510,11 @@ function handleStagePickup(req, res, url) {
   const token = req.query?.t || url.searchParams.get('t');
   const want = req.query?.want || url.searchParams.get('want');
 
-  const allowed = { loada: 'loader', loader: 'payload' };
-  const from = Object.keys(allowed).find((stage) => allowed[stage] === want);
-  if (!from) return rejectOrTrap(req, res);
+  if (want !== 'loader' && want !== 'payload') return rejectOrTrap(req, res);
 
-  const claim = chainLinks.claimPickup(token, from);
+  const claim = chainLinks.claimPickup(token, want);
   if (!claim) {
-    noteEvent('chain_reject', `pickup ${from} -> ${want}`);
+    noteEvent('chain_reject', `pickup -> ${want}`);
     return rejectOrTrap(req, res);
   }
 

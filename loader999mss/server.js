@@ -67,11 +67,12 @@ function route(req) {
     query.action = 'link-serve';
     query.p = linkMatch[1];
   }
-  const staged = !linkMatch && url.pathname.match(/^\/(loada|loader|payload)\.lua\/([^/]+)$/);
+  // Stage 2-4 links are bare tokens: https://host/<token>
+  const staged = !linkMatch && url.pathname.match(/^\/([a-f0-9]{32}\.[0-9]{13}\.[a-f0-9]{32})$/);
   if (staged) {
     query.action = 'artifact';
-    query.name = staged[1];
-    query.t = staged[2];
+    query.name = 'stage';
+    query.t = staged[1];
   } else if (!linkMatch) {
     const mapped = routes[url.pathname] || ['trap'];
     query.action = mapped[0];

@@ -217,3 +217,14 @@ loader ──(เรียก /api/stage-pickup?want=payload → ได้ลิ
   อายุ 10 วินาทีนับจากเวลาที่ออก, ใช้ได้ครั้งเดียว, และผูกกับ stage ของตัวเอง
 - `stage-pickup` ใช้ token ของ stage ที่เพิ่งเรียกมาได้ **ครั้งเดียว** ต่อ token
 - stage 2–4 ยังเป็น Lua อ่านออก (ไม่ obfuscate)
+
+
+## 2026-10-17 — ลิงก์ stage 2-4 ไม่บอกชื่อไฟล์
+
+เดิม: `/loada.lua/<token>`, `/loader.lua/<token>`, `/payload.lua/<token>`
+ใหม่: **`https://loader999mss.vercel.app/<token>`** เท่านั้น (ยกเว้น `loadc.lua` ที่เป็นทางเข้า)
+
+- token = `<chainId 32hex>.<exp 13 หลัก>.<hmac 32hex>` — **ไม่มีชื่อ stage อยู่ข้างใน**
+- เซิร์ฟเวอร์รู้ว่า token เป็นของ stage ไหนโดยไล่ตรวจลายเซ็นกับแต่ละ stage (`resolveToken`)
+- อายุ 10 วินาที, ใช้ครั้งเดียว, และเอา token ของ stage 2 ไปขอ stage 4 ไม่ได้
+- `/api/stage-pickup?t=<token>&want=loader|payload` ใช้ token ที่เพิ่งเรียกได้ครั้งเดียว

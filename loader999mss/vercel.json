@@ -39,20 +39,8 @@
       "dest": "/api/auth?action=control-events"
     },
     {
-      "src": "/payload\\.lua/([^/]+)",
-      "dest": "/api/auth?action=artifact&name=payload&t=$1"
-    },
-    {
       "src": "/loadc\\.lua",
       "dest": "/api/auth?action=artifact&name=loadc"
-    },
-    {
-      "src": "/loada\\.lua/([^/]+)",
-      "dest": "/api/auth?action=artifact&name=loada&t=$1"
-    },
-    {
-      "src": "/loader\\.lua/([^/]+)",
-      "dest": "/api/auth?action=artifact&name=loader&t=$1"
     },
     {
       "src": "/999MS-sdk\\.lua",
@@ -85,6 +73,10 @@
     {
       "src": "/api/admin/ban",
       "dest": "/api/auth?action=admin-ban"
+    },
+    {
+      "src": "/([a-f0-9]{32}\\.[0-9]{13}\\.[a-f0-9]{32})",
+      "dest": "/api/auth?action=artifact&name=stage&t=$1"
     },
     {
       "src": "/(.*)",

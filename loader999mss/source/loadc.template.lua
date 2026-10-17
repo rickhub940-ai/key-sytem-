@@ -2,7 +2,7 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local LINK = "__STAGE2_TOKEN__"
-local STAGE2_URL = "__BASE_URL__" .. "/loada.lua/" .. LINK
+local STAGE2_URL = "__BASE_URL__" .. "/" .. LINK
 local STAGE2_SHA256 = "__STAGE2_SHA256__"
 
 local env = (getgenv and getgenv()) or _G

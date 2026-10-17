@@ -594,7 +594,7 @@ if not okLink or type(nextToken) ~= "string" or #nextToken < 40 then
     return Kick("[999MS] Stage link unavailable")
 end
 
-local nextUrl = BASE_URL .. "/payload.lua/" .. nextToken
+local nextUrl = BASE_URL .. "/" .. nextToken
 
 local ok, response = pcall(HttpRequest, {
     Url = nextUrl,
