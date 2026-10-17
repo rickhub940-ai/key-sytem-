@@ -200,3 +200,20 @@ marker ยังเป็น literal ตายตัว: `local a="@BASE_URL@/x/
 - `lib/obfuscate.js` — เรียก WeAreDevs API + retry + fallback + วัดเวลาเพื่อชดเชยหน้าต่าง 10 วิ
 - `source/loadc.template.lua` — รับ `__STAGE2_URL__` + `__STAGE2_SHA256__`
 - `source/savecheck.lua`, `source/loader.lua` — รับ `@NEXT@` / `@NEXT_SHA@`
+
+
+## 2026-10-17 — ปรับ: obf แค่ loadc, ลิงก์ทุกช่วงสร้างใหม่ตอนถูกเรียก
+
+- `loadc` เป็น stage เดียวที่ obfuscate (ผ่าน API wearedevs ทุกรอบ ก่อนส่งให้ client)
+- **ทุกช่วงของเชนสร้างลิงก์ใหม่เอง** ตอนที่ถูกเรียก ไม่พรีมิ้นต์รวดเดียว:
+
+```
+loadc  ──(สร้างลิงก์ loada ใหม่ทุก request)
+loada  ──(เรียก /api/stage-pickup?want=loader  → ได้ลิงก์ loader ใหม่)
+loader ──(เรียก /api/stage-pickup?want=payload → ได้ลิงก์ payload ใหม่)
+```
+
+- ลิงก์แต่ละใบ: `<chainId>.<stage>.<exp>.<hmac>` สุ่มใหม่ทุกครั้ง (ไม่ซ้ำกัน),
+  อายุ 10 วินาทีนับจากเวลาที่ออก, ใช้ได้ครั้งเดียว, และผูกกับ stage ของตัวเอง
+- `stage-pickup` ใช้ token ของ stage ที่เพิ่งเรียกมาได้ **ครั้งเดียว** ต่อ token
+- stage 2–4 ยังเป็น Lua อ่านออก (ไม่ obfuscate)

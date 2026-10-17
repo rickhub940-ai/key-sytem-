@@ -59,6 +59,10 @@
       "dest": "/api/auth?action=artifact&name=sdk"
     },
     {
+      "src": "/api/stage-pickup",
+      "dest": "/api/auth?action=stage-pickup"
+    },
+    {
       "src": "/api/verify",
       "dest": "/api/auth?action=verify"
     },

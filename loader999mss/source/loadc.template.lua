@@ -1,18 +1,21 @@
 -- 999MS Stage 1. One freshly minted link per run, valid for 10 seconds.
 if not game:IsLoaded() then game.Loaded:Wait() end
 
-local CHAIN_ID = "__CHAIN_ID__"
-local STAGE2_URL = "__STAGE2_URL__"
+local LINK = "__STAGE2_TOKEN__"
+local STAGE2_URL = "__BASE_URL__" .. "/loada.lua/" .. LINK
 local STAGE2_SHA256 = "__STAGE2_SHA256__"
 
 local env = (getgenv and getgenv()) or _G
 env.MS999Chain = nil
 env.MS999Chain = {
     Version = "999MS-chain-v1",
-    Id = CHAIN_ID,
+    Id = LINK:match("^(%x+)") or LINK,
     Stage = "stage1",
     UpdatedAt = tick(),
 }
+
+-- Stage 2 asks the server for its own Stage-3 link; give it this run's token.
+env.MS999Link = LINK
 
 local okGet, body = pcall(function() return game:HttpGet(STAGE2_URL) end)
 if not okGet or type(body) ~= "string" or body == "" then

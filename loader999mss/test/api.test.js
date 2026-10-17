@@ -255,25 +255,53 @@ async function main() {
     'a burned Stage-2 link is never served twice',
   );
 
-  const stage3Url = (stage2.match(/https?:\/\/[^"'\s]+\/loader\.lua\/[A-Za-z0-9.]+/) || [])[0];
-  assert.ok(stage3Url, 'Stage 2 carries its own Stage-3 link');
-  const stage3Res = await fetch(stage3Url, { headers: { 'x-roblox-client': 'test' } });
+  // ── Stage 3 link is created on demand, not embedded ──
+  assert.equal(/loader\.lua\/[a-f0-9]{32}\./.test(stage2), false,
+    'Stage 2 does not embed a Stage-3 link (only the pickup call)');
+  assert.ok(stage2.includes('/api/stage-pickup'), 'Stage 2 asks the server for its link');
+  const stage2Token = stage2Url.split('/loada.lua/')[1];
+  const pickup = async (token, want) => fetch(
+    `http://127.0.0.1:${port}/api/stage-pickup?t=${encodeURIComponent(token)}&want=${want}`,
+    { redirect: 'manual' },
+  );
+  const loaderRes = await pickup(stage2Token, 'loader');
+  assert.equal(loaderRes.status, 200, 'pickup mints the Stage-3 link');
+  const loaderToken = await loaderRes.text();
+  assert.match(loaderToken, /^[a-f0-9]{32}\.loader\.\d{13}\.[a-f0-9]{32}$/);
+  const loaderAgain = await pickup(stage2Token, 'loader');
+  assert.notEqual(loaderAgain.status, 200, 'a token yields exactly one pickup');
+
+  // The Stage-3 token is scoped to Stage 3 and works once.
+  const crossStage = await fetch(`http://127.0.0.1:${port}/payload.lua/${loaderToken}`, { redirect: 'manual' });
+  assert.notEqual(crossStage.status, 200, 'a link cannot be re-pointed at another stage');
+  const stage3Res = await fetch(`http://127.0.0.1:${port}/loader.lua/${loaderToken}`, { redirect: 'manual' });
   assert.equal(stage3Res.status, 200, 'Stage 3 link works');
   const stage3 = await stage3Res.text();
+  const loaderReuse = await fetch(`http://127.0.0.1:${port}/loader.lua/${loaderToken}`, { redirect: 'manual' });
+  assert.notEqual(loaderReuse.status, 200, 'Stage 3 link is single use');
 
-  const stage4Url = (stage3.match(/https?:\/\/[^"'\s]+\/payload\.lua\/[A-Za-z0-9.]+/) || [])[0];
-  assert.ok(stage4Url, 'Stage 3 carries its own Stage-4 link');
-  const stage4Res = await fetch(stage4Url, { headers: { 'x-roblox-client': 'test' } });
+  // Stage 4 the same way.
+  assert.equal(/payload\.lua\/[a-f0-9]{32}\./.test(stage3), false,
+    'Stage 3 does not embed a Stage-4 link');
+  assert.ok(stage3.includes('/api/stage-pickup'), 'Stage 3 asks the server for its link');
+  const payloadRes = await pickup(loaderToken, 'payload');
+  assert.equal(payloadRes.status, 200, 'pickup mints the Stage-4 link');
+  const payloadToken = await payloadRes.text();
+  const stage4Res = await fetch(`http://127.0.0.1:${port}/payload.lua/${payloadToken}`, { redirect: 'manual' });
   assert.equal(stage4Res.status, 200, 'Stage 4 link works');
   const stage4 = await stage4Res.text();
   assert.ok(stage4.length > 1000, 'payload body arrived');
 
-  // A link is scoped to its stage: the Stage-3 token must not open Stage 4.
-  const stage3Token = stage3Url.split('/loader.lua/')[1];
-  const crossStage = await fetch(`http://127.0.0.1:${port}/payload.lua/${stage3Token}`, { redirect: 'manual' });
-  assert.notEqual(crossStage.status, 200, 'a link cannot be re-pointed at another stage');
+  // Each pickup returns a brand-new link, never a cached one.
+  const run2Stage2 = await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
+    headers: { 'x-roblox-client': 'test' },
+  });
+  const run2Url = run2Stage2.headers.get('x-999ms-stage2');
+  const run2Token = run2Url.split('/loada.lua/')[1];
+  const loader2 = await (await pickup(run2Token, 'loader')).text();
+  assert.notEqual(loader2, loaderToken, 'every pickup mints a different link');
 
-  // And a link from an expired run is refused.
+  // Expired links are refused.
   const expired = chainLinks.tokenFor('a'.repeat(32), 'loada', Date.now() - 1000);
   const expiredRes = await fetch(`http://127.0.0.1:${port}/loada.lua/${expired}`, { redirect: 'manual' });
   assert.notEqual(expiredRes.status, 200, 'an expired link is refused');

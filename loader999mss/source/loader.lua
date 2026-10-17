@@ -583,9 +583,18 @@ print("[999MS] Anti-checks passed")
 
 -- ═══ โหลด payload ═══
 print("[999MS] Fetching payload...")
--- Stage 4 link, minted for this run and valid for ten seconds.
-local nextUrl = "@NEXT@"
+-- Ask the server for a Stage-4 link, minted at this moment.
 local nextSha = "@NEXT_SHA@"
+local own = (getgenv and getgenv().MS999Link) or ""
+
+local okLink, nextToken = pcall(function()
+    return game:HttpGet(BASE_URL .. "/api/stage-pickup?t=" .. own .. "&want=payload")
+end)
+if not okLink or type(nextToken) ~= "string" or #nextToken < 40 then
+    return Kick("[999MS] Stage link unavailable")
+end
+
+local nextUrl = BASE_URL .. "/payload.lua/" .. nextToken
 
 local ok, response = pcall(HttpRequest, {
     Url = nextUrl,

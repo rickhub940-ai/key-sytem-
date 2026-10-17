@@ -225,9 +225,19 @@ if type(requestFn) ~= "function" then
     return Kick("[999MS] HTTP not supported")
 end
 
--- Stage 3 link, minted with this run and valid for ten seconds.
-local nextUrl = "@NEXT@"
+-- Ask the server for a Stage-3 link. It is minted now, so it is valid for ten
+-- seconds from this call rather than from when this stage was fetched.
 local nextSha = "@NEXT_SHA@"
+local own = (env and env.MS999Link) or ""
+
+local okLink, nextToken = pcall(function()
+    return game:HttpGet(BASE_URL .. "/api/stage-pickup?t=" .. own .. "&want=loader")
+end)
+if not okLink or type(nextToken) ~= "string" or #nextToken < 40 then
+    return Kick("[999MS] Stage link unavailable")
+end
+
+local nextUrl = BASE_URL .. "/loader.lua/" .. nextToken
 
 local ok, response = pcall(requestFn, {
     Url = nextUrl,

@@ -34,7 +34,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = 'ae25d7330d547590f3692f5bca4a113521fdf1bfe483bb1f6c96fccaad308784';
+const STAGE_TWO_RAW_SHA256 = '40bf2e2d8bdc8647d6e26316c03187ab91a4e720106c79fd914efbfd67b4bfaa';
 
 // ═══ Rate limit ═══
 const rateLimit = new Map();
@@ -282,6 +282,11 @@ module.exports = async function handler(req, res) {
 
   // loadc is generated per request and is the only stage that mints a path
   // capability. The remaining legacy artifacts keep their static handoffs.
+  if (action === 'stage-pickup') {
+    if (trapBrowserArtifacts() && isBrowserRequest(req)) return trapRedirect(res);
+    return handleStagePickup(req, res, url);
+  }
+
   if (action === 'artifact') {
     if (req.method !== 'GET') return rejectOrTrap(req, res, 405);
     if (trapBrowserArtifacts() && isBrowserRequest(req)) return trapRedirect(res);
@@ -407,88 +412,80 @@ function renderLoaderArtifact() {
 }
 
 // ═══ Stage rendering ═══
-// Stage bodies are deterministic for a given host and link, so the previous
-// stage can pin the exact bytes the next one will receive.
-function renderStageBody(name, baseUrl, nextUrl, nextSha) {
+// Bodies are deterministic for a host, so a stage can pin the exact bytes of
+// the next one. The *link* to the next stage is not embedded: it is minted
+// when the client asks for it (see /api/stage-pickup).
+const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
+
+function renderStage(name, baseUrl, nextSha) {
   const raw = name === 'loader' ? renderLoaderArtifact() : readArtifact(name);
   if (typeof raw !== 'string') return null;
   let body = applyChainTokens(raw, baseUrl);
-  if (typeof nextUrl === 'string' && nextUrl) body = body.replaceAll('@NEXT@', nextUrl);
   if (typeof nextSha === 'string' && nextSha) body = body.replaceAll('@NEXT_SHA@', nextSha);
   return body;
 }
 
-const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
-
-// Builds one complete run: four bodies and the links that join them.
-function buildRun(baseUrl, chain) {
-  const url = (stage) => `${baseUrl}/${stage}.lua/${chain.tokens[stage]}`;
-  const payloadBody = renderStageBody('payload', baseUrl);
-  if (!payloadBody) return null;
-  const loaderBody = renderStageBody('loader', baseUrl, url('payload'), sha256(payloadBody));
-  if (!loaderBody) return null;
-  const loadaBody = renderStageBody('loada', baseUrl, url('loader'), sha256(loaderBody));
-  if (!loadaBody) return null;
-  return {
-    payload: payloadBody,
-    loader: loaderBody,
-    loada: loadaBody,
-    loadaUrl: url('loada'),
-    stage2Sha256: sha256(loadaBody),
-  };
-}
-
-// The chain is stateless, so every stage link can be recomputed from the
-// claim and the run rebuilt byte-for-byte on whichever instance serves it.
-function rebuildRun(baseUrl, claim) {
-  const tokens = {};
-  for (const stage of chainLinks.STAGES) {
-    tokens[stage] = chainLinks.tokenFor(claim.chainId, stage, claim.exp);
+// Resolved lazily and cached per host: it is pure text templating.
+const renderedCache = new Map();
+function stageBody(name, baseUrl) {
+  const key = `${name}|${baseUrl}`;
+  if (renderedCache.has(key)) return renderedCache.get(key);
+  let body = null;
+  if (name === 'payload') {
+    body = renderStage('payload', baseUrl);
+  } else if (name === 'loader') {
+    const payloadBody = stageBody('payload', baseUrl);
+    body = payloadBody ? renderStage('loader', baseUrl, sha256(payloadBody)) : null;
+  } else if (name === 'loada') {
+    const loaderBody = stageBody('loader', baseUrl);
+    body = loaderBody ? renderStage('loada', baseUrl, sha256(loaderBody)) : null;
+  } else if (name === 'sdk') {
+    body = applyChainTokens(readArtifact('sdk'), baseUrl);
   }
-  return buildRun(baseUrl, { chainId: claim.chainId, exp: claim.exp, tokens });
+  if (typeof body === 'string') renderedCache.set(key, body);
+  return body;
 }
 
 async function serveArtifact(req, res, name, url, origin) {
   const baseUrl = origin || publicBaseUrl();
   if (!baseUrl) return res.status(503).send('');
 
-  // Stage 1 is minted per request and obfuscated per request.
+  // Stage 1: a fresh Stage-2 link, obfuscated per request.
   if (name === 'loadc') {
-    // Links are minted first (their URLs are inside the source), with the last
-    // measured obfuscation time added so the client still gets the full TTL.
-    const chain = chainLinks.createChain(Date.now(), obfuscationBudgetMs());
-    if (!chain) return res.status(503).send('');
-    const run = buildRun(baseUrl, chain);
-    if (!run) return res.status(503).send('');
+    const loadaBody = stageBody('loada', baseUrl);
+    if (!loadaBody) return res.status(503).send('');
+    const link = chainLinks.mintLink('loada', Date.now(), obfuscationBudgetMs());
+    if (!link) return res.status(503).send('');
     const template = fs.readFileSync(path.join(process.cwd(), 'artifacts', 'loadc.lua'), 'utf8');
     const rendered = template
-      .replaceAll('__CHAIN_ID__', chain.chainId)
-      .replaceAll('__STAGE2_URL__', run.loadaUrl)
-      .replaceAll('__STAGE2_SHA256__', run.stage2Sha256);
+      .replaceAll('__STAGE2_TOKEN__', link.token)
+      .replaceAll('__STAGE2_SHA256__', sha256(loadaBody))
+      .replaceAll('__BASE_URL__', baseUrl);
     const obfuscated = await obfuscateStageOne(rendered);
     if (!obfuscated) return res.status(503).send('');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('x-999ms-obf', obfuscated.method);
-    if (process.env.CHAIN_DEBUG === '1') res.setHeader('x-999ms-stage2', run.loadaUrl);
+    if (process.env.CHAIN_DEBUG === '1') {
+      res.setHeader('x-999ms-stage2', `${baseUrl}/loada.lua/${link.token}`);
+    }
     return res.status(200).send(obfuscated.body);
   }
 
-  // Stage 2-4 need the link minted for this run.
+  // Stages 2-4: each is reached through a one-time link minted on demand.
   if (name === 'loada' || name === 'loader' || name === 'payload') {
     const token = req.query?.t || url.searchParams.get('t');
-    const claim = chainLinks.consume(token, name);
-    if (!claim) return rejectOrTrap(req, res);
-    const run = rebuildRun(baseUrl, claim);
-    if (!run) return res.status(503).send('');
+    if (!chainLinks.consume(token, name)) return rejectOrTrap(req, res);
+    const body = stageBody(name, baseUrl);
+    if (typeof body !== 'string') return res.status(503).send('');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).send(run[name]);
+    return res.status(200).send(body);
   }
 
   if (name === 'sdk') {
     try {
-      const body = applyChainTokens(readArtifact('sdk'), baseUrl);
+      const body = stageBody('sdk', baseUrl);
       if (typeof body !== 'string') return res.status(503).send('');
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
@@ -502,7 +499,33 @@ async function serveArtifact(req, res, name, url, origin) {
   return rejectOrTrap(req, res);
 }
 
-// ═══ /api/verify ═══// ═══ /api/verify ═══
+// ═══ /api/stage-pickup ═══
+// The client redeemed a stage link; hand it a freshly minted link for the next
+// stage. The presented token proves the chain reached this point, and may be
+// used for a pickup exactly once.
+function handleStagePickup(req, res, url) {
+  if (req.method !== 'GET') return rejectOrTrap(req, res, 405);
+  const token = req.query?.t || url.searchParams.get('t');
+  const want = req.query?.want || url.searchParams.get('want');
+
+  const allowed = { loada: 'loader', loader: 'payload' };
+  const from = Object.keys(allowed).find((stage) => allowed[stage] === want);
+  if (!from) return rejectOrTrap(req, res);
+
+  const claim = chainLinks.claimPickup(token, from);
+  if (!claim) {
+    noteEvent('chain_reject', `pickup ${from} -> ${want}`);
+    return rejectOrTrap(req, res);
+  }
+
+  const link = chainLinks.mintLink(want);
+  if (!link) return res.status(503).send('');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(200).send(link.token);
+}
+
+// ═══ /api/verify ═══// ═══ /api/verify ═══// ═══ /api/verify ═══
 async function handleVerify(req, res, ip) {
   const xorKey = process.env.PAYLOAD_XOR_KEY || '';
   const { key, hwid, userId, scriptName } = req.body || {};
