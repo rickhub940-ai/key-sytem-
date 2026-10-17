@@ -121,3 +121,19 @@ MS9MARK_<64 hex>   ← HMAC_SHA256(secret, '999MS chain marker v1')
 - ค่าคงที่ทุก request/instance (ไฟล์ที่เซฟไว้รอบก่อนยังถูกจับได้รอบถัดไป) แต่เดาจากสคริปต์ไม่ได้
 - Stage-1 pin sha256 ของ Stage 2 คำนวณ **หลัง** แทน marker แล้ว → hash ตรงเสมอ
 - แต่ละ stage ที่เสิร์ฟไม่มี token ค้าง (`__CHAIN_MARKER__` ถูกแทนหมด)
+
+## 2026-10-17 — marker ตรวจการเซฟซอร์ส = ค่าตายตัว (พร้อม obfuscate)
+
+เปลี่ยนจาก `-- supper_Boom` เป็น **ตัวแปรค่าตายตัว** ที่อยู่บนสุดของ Stage 2 และดูเหมือน
+ค่าคงที่สำหรับลิงก์ถัดไป:
+
+```lua
+local NEXT_LINK = "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904"
+...
+local marker = NEXT_LINK
+```
+
+- ไม่มีการแทนค่าตอนเสิร์ฟแล้ว (ไม่มี token `__CHAIN_MARKER__` / `MS9MARK_...` อีก)
+- ไบต์ของ Stage 2 คงที่ทุก request → เอาโค้ดไป obfuscate ได้โดยไม่กระทบ hash pin
+- เก็บ `local NEXT_LINK = ...` ไว้ **เหนือบล็อกที่จะ obfuscate** แล้ว obfuscate ส่วนที่เหลือ
+- ค่าที่สแกนหา = ตัว literal ใน `NEXT_LINK` (มี `/x/<40 hex>` ฝังอยู่ จึงไม่ซ้ำกับโค้ดอื่น)

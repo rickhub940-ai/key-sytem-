@@ -159,13 +159,16 @@ async function main() {
   const second = await (await post('/api/link', { scriptName: 'main' }, { 'x-admin-token': env.ADMIN_TOKEN })).json();
   assert.notEqual(second.path, linkBody.path, 'every link gets its own random namespace');
 
-  // ── save-detector marker: long random value, not the old literal ──
+  // ── save-detector marker: a fixed literal, styled as the next-hop variable ──
   const STAGE2 = fs.readFileSync(path.join(__dirname, '..', 'artifacts', 'loada.lua'), 'utf8');
-  assert.match(STAGE2, /__CHAIN_MARKER__/, 'the marker is a serve-time token');
   assert.equal(/supper_Boom|super_boom/i.test(STAGE2), false, 'the old literal is gone');
+  assert.equal(STAGE2.includes('__CHAIN_MARKER__'), false, 'the marker is not a serve-time token');
+  assert.match(STAGE2, /local NEXT_LINK = "@BASE_URL@\/x\/[a-f0-9]{40}"/,
+    'the marker is a fixed next-hop literal at the top of the stage');
+  assert.match(STAGE2, /local marker = NEXT_LINK/, 'the scanner uses that same variable');
   assert.equal(
     require('node:crypto').createHash('sha256').update(STAGE2).digest('hex'),
-    require('node:fs').readFileSync(path.join(__dirname, '..', 'api', 'auth.js'), 'utf8')
+    fs.readFileSync(path.join(__dirname, '..', 'api', 'auth.js'), 'utf8')
       .match(/STAGE_TWO_RAW_SHA256 = '([a-f0-9]{64})'/)[1],
     'the raw-artifact pin must match artifacts/loada.lua',
   );
@@ -184,12 +187,12 @@ async function main() {
     pinned,
     'the served Stage 2 must hash to the pin inside the served Stage 1',
   );
-  const marker = stage2.match(/-- (MS9MARK_[a-f0-9]{64})/);
-  assert.ok(marker, 'served Stage 2 carries a long random marker: ' + stage2.split('\n')[0]);
-  assert.equal(/supper_Boom|super_boom/i.test(stage2), false, 'no static marker is served');
+  const hop = stage2.match(/local NEXT_LINK = "([^"]+)"/);
+  assert.ok(hop, 'served Stage 2 declares the hop literal');
+  assert.equal(hop[1].includes('@BASE_URL@'), false, 'the host is resolved before serving');
+  assert.ok(stage2.includes(`local marker = NEXT_LINK`), 'scanner still points at the hop');
 
-  // The marker must be stable, otherwise a file saved in one session would not
-  // be found in the next one.
+  // The same bytes every time: the marker must not be randomised per request.
   const loadc2 = await (await fetch(`http://127.0.0.1:${port}/loadc.lua`, {
     headers: { 'x-roblox-client': 'test' },
   })).text();
@@ -198,17 +201,17 @@ async function main() {
   const stage2b = await (await fetch(`http://127.0.0.1:${port}/loada.lua/${cap2[1]}/${capN2[1]}`, {
     headers: { 'x-roblox-client': 'test' },
   })).text();
-  assert.ok(stage2b.includes(marker[1]), 'the marker is stable across requests');
+  assert.equal(stage2b, stage2, 'Stage 2 is byte-identical across requests');
 
   for (const file of ['loader', 'payload']) {
     const body = await (await fetch(`http://127.0.0.1:${port}/${file}.lua`, {
       headers: { 'x-roblox-client': 'test' },
     })).text();
     assert.equal(/supper_Boom|super_boom/i.test(body), false, file + ' has no static marker');
-    assert.equal(/__CHAIN_MARKER__/.test(body), false, file + ' has every token resolved');
+    assert.equal(/__CHAIN_MARKER__/.test(body), false, file + ' has no unresolved token');
   }
 
-  console.log('PASS API without realtime');
+  console.log('PASS API without realtime');  console.log('PASS API without realtime');
 }
 
 main().then(() => { stop(); process.exit(0); })
