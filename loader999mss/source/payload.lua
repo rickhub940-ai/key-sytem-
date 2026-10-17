@@ -749,7 +749,10 @@ local function FetchAndLoad(key, sname)
     local hwid = GetHWID()
     local userId = tostring(Players.LocalPlayer.UserId)
 
-    Step = Step + 1
+    -- One attempt, one counter. It used to accumulate across attempts, so a
+    -- failed auto-load (stale getgenv().Key) followed by a manual login left
+    -- Step at 5 and the hand-off kicked with S9 even though the key passed.
+    Step = 1
 
     -- Generate the challenge before the first call: the server transforms these
     -- values and we invert the transform to prove the response is genuine.
