@@ -29,7 +29,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = '2c6a584d79164980356212f691af1e01f0a5df0164e2f445c9427f8296c536ec';
+const STAGE_TWO_RAW_SHA256 = '53018577827a3f04b68dfc7fb139e2b07c73d6f3849763a3510ee903af63e076';
 // Capability redemption is additionally tracked for the lifetime of a warm
 // function. The signed capability is the cross-instance authority; the map
 // closes accidental/replayed fetches that return to the same instance.
@@ -130,6 +130,34 @@ function hasAdminAccess(req) {
   const expected = process.env.ADMIN_TOKEN;
   return typeof expected === 'string' && expected.length >= 32
     && timingSafeStringEquals(req.headers['x-admin-token'], expected);
+}
+
+// The save-detector marker used to be the literal "-- supper_Boom". It is now a
+// long random-looking value derived from a server secret: stable across
+// requests and instances (so a file saved in one session is still caught in the
+// next), but impossible to guess from the served script alone.
+let cachedChainMarker = null;
+function chainMarker() {
+  if (cachedChainMarker) return cachedChainMarker;
+  const secret = process.env.LINK_SECRET || process.env.TICKET_SECRET;
+  if (typeof secret !== 'string' || secret.length < 32) return null;
+  const digest = crypto.createHmac('sha256', secret).update('999MS chain marker v1').digest('hex');
+  cachedChainMarker = 'MS9MARK_' + digest;
+  return cachedChainMarker;
+}
+
+// Applied to every served stage, right before the Stage-2 hash is computed, so
+// the pinned hash always covers exactly the bytes the executor receives.
+function applyChainTokens(body, baseUrl) {
+  if (typeof body !== 'string') return body;
+  let out = body;
+  if (baseUrl && out.includes('@BASE_URL@')) out = out.replaceAll('@BASE_URL@', baseUrl);
+  if (out.includes('__CHAIN_MARKER__')) {
+    const marker = chainMarker();
+    if (!marker) return null;
+    out = out.replaceAll('__CHAIN_MARKER__', marker);
+  }
+  return out;
 }
 
 function loadaPathSecret() {
@@ -296,7 +324,8 @@ module.exports = async function handler(req, res) {
     try {
       let body = readArtifact('payload');
       if (typeof body !== 'string') return res.status(404).send('Not Found');
-      if (body.includes('@BASE_URL@')) body = body.replaceAll('@BASE_URL@', requestOrigin(req));
+      body = applyChainTokens(body, requestOrigin(req));
+      if (!body) return res.status(404).send('Not Found');
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       return res.status(200).send(body);
@@ -444,8 +473,10 @@ async function serveArtifact(req, res, name, url, origin) {
   try {
     let body = name === 'loader' ? renderLoaderArtifact() : readArtifact(name);
     if (typeof body !== 'string') return res.status(503).send('');
-    // Readable stages carry @BASE_URL@ so the host is never hard-coded.
-    if (body.includes('@BASE_URL@')) body = body.replaceAll('@BASE_URL@', origin || '');
+    // Readable stages carry @BASE_URL@ (host) and __CHAIN_MARKER__ (save
+    // detector) so neither a host nor the marker is ever hard-coded.
+    body = applyChainTokens(body, origin || '');
+    if (!body) return res.status(503).send('');
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).send(body);
@@ -468,7 +499,8 @@ function renderLoadcArtifact(origin) {
   if (!stagedRaw) return null;
   // Stage 1 pins exactly the bytes Stage 2 will receive, with the host already
   // resolved for this request.
-  const stagedSource = stagedRaw.replaceAll('@BASE_URL@', baseUrl);
+  const stagedSource = applyChainTokens(stagedRaw, baseUrl);
+  if (!stagedSource) return null;
   const stagedSha256 = crypto.createHash('sha256').update(stagedSource).digest('hex');
   return fs.readFileSync(path.join(process.cwd(), 'artifacts', 'loadc.lua'), 'utf8')
     .replaceAll('__CHAIN_ID__', crypto.randomBytes(32).toString('hex'))

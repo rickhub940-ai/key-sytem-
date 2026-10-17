@@ -106,3 +106,18 @@ https://<host>/x/<40 hex สุ่ม>?at=<exp base36>.<sig 32 ตัว>
 - entry script ต่อเข้า `/loadc.lua` บน host เดิม → chain เดิมทั้งหมด
 - `LINK_SECRET` = ค่าสุ่มยาว 64 hex (ตั้งใน Vercel production แล้ว) ถ้าไม่มีจะใช้ `TICKET_SECRET`
 - แผง `/control` มีการ์ด **สร้างลิงก์โหลด** + ปุ่มคัดลอก (ลิงก์ / บรรทัด executor / สคริปต์เต็ม)
+
+## 2026-10-17 — marker ตรวจการเซฟซอร์สเป็นค่าสุ่มยาว
+
+เดิม `source/savecheck.lua` (Stage 2) ฝัง `-- supper_Boom` ไว้ 2 ที่ (บรรทัดแรก + สตริงที่ใช้สแกน)
+
+ตอนนี้เป็น token `__CHAIN_MARKER__` ที่ถูกแทนตอนเสิร์ฟด้วยค่า
+
+```
+MS9MARK_<64 hex>   ← HMAC_SHA256(secret, '999MS chain marker v1')
+```
+
+- secret = `LINK_SECRET` → `TICKET_SECRET`
+- ค่าคงที่ทุก request/instance (ไฟล์ที่เซฟไว้รอบก่อนยังถูกจับได้รอบถัดไป) แต่เดาจากสคริปต์ไม่ได้
+- Stage-1 pin sha256 ของ Stage 2 คำนวณ **หลัง** แทน marker แล้ว → hash ตรงเสมอ
+- แต่ละ stage ที่เสิร์ฟไม่มี token ค้าง (`__CHAIN_MARKER__` ถูกแทนหมด)

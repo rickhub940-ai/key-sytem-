@@ -1,4 +1,4 @@
--- supper_Boom
+-- __CHAIN_MARKER__
 -- Stage 2: remove dumped copies of this checker, then terminate.
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
@@ -97,7 +97,7 @@ local function removeMarkedFiles()
         return false
     end
 
-    local marker = "-- supper_Boom"
+    local marker = "__CHAIN_MARKER__"
     local pending = { "." }
     local seen = {}
     local matches = {}
