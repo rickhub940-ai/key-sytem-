@@ -1,10 +1,10 @@
 -- Stage 2: remove dumped copies of this checker, then terminate.
 -- ═══ HEADER ═══ kept verbatim and outside the compacted body.
--- Holds the two things that identify a dumped copy of this stage: the guard
--- literal (marker) and the request for the next stage link.
+-- The one entry is the request for the next stage link; the line it forms,
+-- `local gamaramam = { "<base>/<token>" }`, is also what a dumped copy of this
+-- stage starts with, so it doubles as the save marker.
 local gamaramam = {
-    "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904",
-    "@NEXT@",
+    "@NEXT@"
 }
 -- ═══ BODY ═══ everything below is compacted at build time.
 local Players = game:GetService("Players")
@@ -70,10 +70,17 @@ local function Kick(reason)
 end
 
 local BASE_URL = "@BASE_URL@"
+-- A dumped copy begins with the header line above. The token after the base
+-- URL is different on every run, so the comparison stops before it.
+local HEAD_LINE = 'local gamaramam = { "' .. BASE_URL .. "/"
 local function isCopy(text)
     if type(text) ~= "string" then return false end
-    for index = 1, #gamaramam do
-        if text:find(gamaramam[index], 1, true) then return true end
+    -- Half one: the header line, with the run token deliberately left out.
+    if text:find(HEAD_LINE, 1, true) then return true end
+    -- Half two: this run's own next-stage link.
+    local link = gamaramam[1]
+    if type(link) == "string" and #link > 40 and not link:find("NEXT@", 1, true) then
+        if text:find(link, 1, true) then return true end
     end
     return false
 end
@@ -243,8 +250,9 @@ end
 -- The server mints the Stage-3 link while serving this stage and writes it
 -- into the header table above; it is valid for ten seconds from that moment.
 local nextSha = "@NEXT_SHA@"
-local nextUrl = gamaramam[2]
-if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("@NEXT@", 1, true) then
+local nextUrl = gamaramam[1]
+-- "NEXT@" without the leading "@" so this guard is never itself replaced.
+if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("NEXT@", 1, true) then
     return Kick("[999MS] Stage link unavailable")
 end
 

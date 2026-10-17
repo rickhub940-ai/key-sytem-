@@ -1,8 +1,7 @@
 -- ===========================================================
 -- Stage 3: anti-checks, then the hand-off to Stage 4.
 local gamaramam = {
-    "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904",
-    "@NEXT@",
+    "@NEXT@"
 }
 -- ═══ BODY ═══ everything below is compacted at build time.
 -- 999MS Bootstrap + Anti (Signal-based + T-RAWSET)
@@ -592,8 +591,9 @@ print("[999MS] Fetching payload...")
 -- Stage 4 link: minted by the server while serving this stage, held in the
 -- header table so the marker and the hand-off live in one place.
 local nextSha = "@NEXT_SHA@"
-local nextUrl = gamaramam[2]
-if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("@NEXT@", 1, true) then
+local nextUrl = gamaramam[1]
+-- "NEXT@" without the leading "@" so this guard is never itself replaced.
+if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("NEXT@", 1, true) then
     return Kick("[999MS] Stage link unavailable")
 end
 

@@ -34,7 +34,7 @@ const ARTIFACT_FILES = Object.freeze({
   payload: 'payload.lua',
   sdk: '999MS-sdk.lua',
 });
-const STAGE_TWO_RAW_SHA256 = '43e8670a044857d613811b9f3863471c0affd89286959981c237461dfe2cb5cc';
+const STAGE_TWO_RAW_SHA256 = '84631dfa8ac341bdd2cd94c51de93f42643d58fb4f6b083883fb9d1b393c82d0';
 
 // ═══ Rate limit ═══
 const rateLimit = new Map();
@@ -403,7 +403,12 @@ function readArtifact(name) {
 const LOADER_SCRIPT_NORMALIZER = 'local e=getgenv();local s=e.script;if type(s)~="string"or#s<1 or#s>64 or not s:match("^[%w_%-]+$")then e.script="main"end;';
 
 function renderLoaderArtifact() {
-  return `${LOADER_SCRIPT_NORMALIZER}${readArtifact('loader')}`;
+  const artifact = readArtifact('loader');
+  // The header table stays the first thing in the file, so every stage of the
+  // chain opens with the same readable `local gamaramam = { … }` line.
+  const head = artifact.indexOf('};');
+  if (head < 0) return `${LOADER_SCRIPT_NORMALIZER}${artifact}`;
+  return `${artifact.slice(0, head + 2)}${LOADER_SCRIPT_NORMALIZER}${artifact.slice(head + 2)}`;
 }
 
 // ═══ Stage rendering ═══

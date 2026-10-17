@@ -51,12 +51,13 @@ const header = headerSource
   .replace(/\s+/g, ' ')
   .trim();
 if (!/^local gamaramam\s*=/.test(header)) throw new Error('header must declare gamaramam');
-if (!/@BASE_URL@\/x\/[a-f0-9]{40}/.test(header)) throw new Error('header lost the marker literal');
+if (!/^local gamaramam = \{ "@NEXT@" \}$/.test(header)) throw new Error('header must be a one-entry gamaramam table');
 if (!header.includes('"@NEXT@"')) throw new Error('header lost the next-link slot');
 
 const stage2 = `${header};${compact(bodySource, 'savecheck.lua')}`;
 if (!/local gamaramam\s*=/.test(stage2)) throw new Error('stage 2 dropped the header table');
 if (!/gamaramam\s*\[/.test(stage2)) throw new Error('body no longer reads the header table');
+if (!stage2.includes('local gamaramam = { "')) throw new Error('body lost the save marker needle');
 write('loada.lua', stage2);
 console.log('stage 2 (loada)   ', stage2.length, 'bytes  sha256', sha256(stage2));
 
@@ -71,7 +72,7 @@ function splitHeader(source, raw, marker) {
     .replace(/\s+/g, ' ')
     .trim();
   if (!/^local gamaramam\s*=/.test(header)) throw new Error(`${source}: header must declare gamaramam`);
-  if (!header.includes('"@NEXT@"')) throw new Error(`${source}: header lost the next-link slot`);
+  if (!/^local gamaramam = \{ "@NEXT@" \}$/.test(header)) throw new Error(`${source}: header must be a one-entry gamaramam table`);
   return { header, body: raw.slice(cut) };
 }
 

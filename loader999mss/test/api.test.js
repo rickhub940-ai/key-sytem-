@@ -212,13 +212,12 @@ async function main() {
   const STAGE2 = fs.readFileSync(path.join(__dirname, '..', 'artifacts', 'loada.lua'), 'utf8');
   assert.equal(/supper_Boom|super_boom/i.test(STAGE2), false, 'the old literal is gone');
   assert.equal(STAGE2.includes('__CHAIN_MARKER__'), false, 'the marker is not a serve-time token');
-  // The marker and the next-stage link live in one table that the build keeps
-  // outside the compacted body, so the name and literals stay readable.
-  assert.match(STAGE2, /^local gamaramam = \{/, 'the header table opens the stage');
-  assert.ok(STAGE2.includes(`"@BASE_URL@/x/${'6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904'}"`),
-    'the marker literal is the first entry');
-  assert.ok(STAGE2.includes('"@NEXT@"'),
-    'the next-stage link slot is the second entry');
+  // The next-stage link lives in a one-entry table that the build keeps outside
+  // the compacted body, so the name and the link stay readable.
+  assert.ok(STAGE2.startsWith('local gamaramam = { "@NEXT@" };'),
+    'the header is exactly `local gamaramam = { "<link>" }`');
+  assert.ok(STAGE2.includes(`'local gamaramam = { "'`),
+    'the save marker is that header line, with the token left out of the needle');
   assert.ok(/gamaramam\s*\[/.test(STAGE2), 'the body reads the table instead of copying it');
   assert.equal((STAGE2.match(/gamaramam/g) || []).length >= 3, true,
     'the name survives compaction');
@@ -272,8 +271,20 @@ async function main() {
   assert.equal(stage3Res.status, 200, 'Stage 3 link works');
   const stage3 = await stage3Res.text();
   assert.equal(/stage-pickup/.test(stage3), false, 'Stage 3 names no pickup endpoint');
+  assert.match(stage3, /^local gamaramam = \{ "[^"]+" \};/,
+    'Stage 3 opens with the same readable header');
   assert.notEqual((await fetch(stage3Url, { redirect: 'manual' })).status, 200,
     'Stage 3 link is single use');
+
+  // Regression: the placeholder must not appear inside the guard that checks
+  // for it, otherwise the server writes the URL into its own guard and every
+  // run kicks with "Stage link unavailable".
+  for (const [label, body] of [['stage 2', stage2], ['stage 3', stage3]]) {
+    assert.equal(body.includes('find(' + String.fromCharCode(34) + stage3Url + String.fromCharCode(34)),
+      false, label + ' must not embed its next URL inside a find() guard');
+    assert.ok(body.includes('find("NEXT@",1,true)') || body.includes('find("NEXT@", 1, true)'),
+      label + ' keeps the unresolved-slot guard readable');
+  }
 
   const stage4Url = (stage3.match(LINK) || [])[0];
   assert.ok(stage4Url, 'Stage 3 carries a freshly minted Stage-4 link');
