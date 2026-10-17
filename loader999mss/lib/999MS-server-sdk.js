@@ -193,6 +193,70 @@ function verifyRuntimeProof({
   return null;
 }
 
+// ═══ Request hopping (nonce chain between the three client calls) ═══
+// Each successful step burns its hop and issues the next one, so a captured
+// response cannot be replayed and a skipped step cannot be imitated.
+const HOPS = new Map();
+const HOP_TTL_MS = 3 * 60 * 1000;
+
+function pruneHops(now = Date.now()) {
+  for (const [key, value] of HOPS) {
+    if (now - value.issuedAt > HOP_TTL_MS) HOPS.delete(key);
+  }
+}
+
+function issueHop(ticketJti, meta = {}) {
+  pruneHops();
+  const hop = crypto.randomBytes(24).toString('hex');
+  HOPS.set(hop, { jti: ticketJti, issuedAt: Date.now(), ...meta });
+  return hop;
+}
+
+function consumeHop(hop, ticketJti) {
+  if (typeof hop !== 'string' || !/^[a-f0-9]{48}$/.test(hop)) return null;
+  pruneHops();
+  const entry = HOPS.get(hop);
+  if (!entry) return null;
+  if (entry.jti !== ticketJti) return null;
+  HOPS.delete(hop);
+  if (Date.now() - entry.issuedAt > HOP_TTL_MS) return null;
+  return entry;
+}
+
+// ═══ Equation challenge (client must answer with the inverse transform) ═══
+// The server publishes two linear transforms of a secret integer; the client
+// recovers the integer and answers with Equate(integer). A replayed or forged
+// response cannot produce a fresh answer.
+function clampInt(value) {
+  if (!Number.isSafeInteger(value)) return null;
+  return ((value % 2000000000) + 2000000000) % 2000000000;
+}
+
+function equateServer(value) {
+  let X = (value + 73) % 2147483647;
+  let Y = Math.pow(X % 11, 3) + (X % 5) * 97 + Math.floor(X / 3);
+  if (X !== 0) Y = Y + X * 37 - Math.pow(X % 9, 2);
+  else Y = Math.abs(Y) + 137;
+  return (Y * 7919 + 1234567) % 100000000000003;
+}
+
+function createEquationChallenge() {
+  const secret = crypto.randomInt(1000, 1000000000);
+  return {
+    secret,
+    // f1(x) = 2x - 32 ; f2(x) = 5x + 256
+    a: secret * 2 - 32,
+    b: secret * 5 + 256,
+    answer: equateServer(secret),
+  };
+}
+
+function checkEquationAnswer(challenge, supplied) {
+  if (!challenge) return false;
+  if (typeof supplied !== 'number' || !Number.isFinite(supplied)) return false;
+  return Math.abs(supplied - challenge.answer) < 0.5;
+}
+
 module.exports = {
   RNG_CHALLENGE_TRANSFORMS,
   createChallengeResponse,
@@ -203,4 +267,8 @@ module.exports = {
   deriveRuntimeCredentials,
   timingSafeStringEqual,
   verifyRuntimeProof,
+  issueHop,
+  consumeHop,
+  createEquationChallenge,
+  checkEquationAnswer,
 };

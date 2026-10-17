@@ -13,6 +13,10 @@ const {
   decodeProtectedPayload,
   deriveRuntimeCredentials,
   verifyRuntimeProof,
+  issueHop,
+  consumeHop,
+  createEquationChallenge,
+  checkEquationAnswer,
 } = require('../lib/999MS-server-sdk');
 const {
   revokeHwid, revokeHwidHash, revokeUser, revokeIp, checkRevoked, stats, listRevocations,
@@ -217,11 +221,39 @@ function isBrowserRequest(req) {
 }
 
 // ═══ Main handler ═══
-const CONTROL_ACTIONS = new Set(['control-bans', 'control-traffic']);
+const CONTROL_ACTIONS = new Set(['control-bans', 'control-traffic', 'control-events']);
 // Ring buffer of the last 200 requests (no bodies, keys, HWIDs or tickets) so
 // the panel can show what an executor actually fetched and which status it got.
 const trafficLog = [];
 const TRAFFIC_MAX = 200;
+
+// ═══ Security events (bounded ring buffer, surfaced in the panel) ═══
+const EVENTS_MAX = 200;
+const securityEvents = [];
+function noteEvent(kind, detail) {
+  securityEvents.push({
+    ts: Date.now(),
+    kind: String(kind).slice(0, 40),
+    detail: typeof detail === 'string' ? detail.slice(0, 160) : '',
+  });
+  if (securityEvents.length > EVENTS_MAX) securityEvents.splice(0, securityEvents.length - EVENTS_MAX);
+}
+
+// The HWID travels in a header as well as the body (the pattern used by
+// established whitelists). Body and header must agree; a mismatch means the
+// request was rewritten in flight.
+function hwidFromRequest(req, bodyValue) {
+  const header = req.headers['x-ms999-hwid'];
+  const fromHeader = typeof header === 'string' ? header.trim() : '';
+  const fromBody = typeof bodyValue === 'string' ? bodyValue.trim() : '';
+  if (fromHeader && fromBody && fromHeader !== fromBody) {
+    noteEvent('hwid_spoof', 'header and body disagree');
+    return { ok: false, reason: 'hwid mismatch' };
+  }
+  const value = fromHeader || fromBody;
+  if (value.length < 4 || value.length > 512) return { ok: false, reason: 'invalid hwid format' };
+  return { ok: true, hwid: value };
+}
 
 // ═══ /api/link (admin) ═══
 // Creates one random, expiring loader link: /x/<40 hex>?at=<token>.
@@ -349,6 +381,11 @@ module.exports = async function handler(req, res) {
     if (action === 'control-traffic') {
       const limit = Math.min(Number(req.body && req.body.limit) || 100, TRAFFIC_MAX);
       return res.status(200).json({ ok: true, count: trafficLog.length, traffic: trafficLog.slice(-limit).reverse() });
+    }
+
+    if (action === 'control-events') {
+      const limit = Math.min(Number(req.body && req.body.limit) || 100, EVENTS_MAX);
+      return res.status(200).json({ ok: true, count: securityEvents.length, events: securityEvents.slice(-limit).reverse() });
     }
 
     // control-bans
@@ -506,8 +543,13 @@ async function handleVerify(req, res, ip) {
 
   if (typeof key !== 'string' || !key.trim())
     return res.status(400).json({ valid: false, error: 'key required' });
-  if (typeof hwid !== 'string' || hwid.length < 4 || hwid.length > 512)
-    return res.status(400).json({ valid: false, error: 'invalid hwid format' });
+
+  const hwidCheck = hwidFromRequest(req, hwid);
+  if (!hwidCheck.ok) {
+    noteEvent('verify_reject', hwidCheck.reason + ' | key ' + hashHwid(key).slice(0, 12));
+    return res.status(400).json({ valid: false, error: hwidCheck.reason });
+  }
+  const clientHwid = hwidCheck.hwid;
   if (typeof scriptName !== 'string' || scriptName.length < 1 || scriptName.length > 64)
     return res.status(400).json({ valid: false, error: 'scriptName required' });
   if (!isValidScriptName(scriptName))
@@ -515,11 +557,13 @@ async function handleVerify(req, res, ip) {
   if (challengeSupplied && !clientChallenge.ok)
     return res.status(400).json({ valid: false, error: clientChallenge.reason });
 
-  const reason = checkRevoked({ hwid, userId, ip });
-  if (reason)
+  const reason = checkRevoked({ hwid: clientHwid, userId, ip });
+  if (reason) {
+    noteEvent('ban_hit', 'verify | hwid ' + hashHwid(clientHwid).slice(0, 12));
     return res.status(403).json({ valid: false, message: 'Banned: ' + reason });
+  }
 
-  const result = await verifyKey(key, hwid);
+  const result = await verifyKey(key, clientHwid);
   if (!result.valid) {
     return res.status(result.rateLimited ? 429 : 200).json({
       valid: false,
@@ -528,13 +572,27 @@ async function handleVerify(req, res, ip) {
   }
 
   const ticket = issueTicket({
-    hwidHash: hashHwid(hwid),
+    hwidHash: hashHwid(clientHwid),
     scope: 'script',
     userId: userId || null,
     scriptName,
   });
+  const claims = verifyTicket(ticket);
 
-  const response = { valid: true, ticket, k: xorKey };
+  // Hand the client two things it has to work with before it may proceed:
+  //  * hop    — a one-time id that /api/script must burn
+  //  * A, B   — linear transforms of a secret integer; the answer is Equate(x)
+  const equation = createEquationChallenge();
+  const hop = issueHop(claims.jti, { answer: equation.answer, hwidHash: claims.hwidHash });
+
+  const response = {
+    valid: true,
+    ticket,
+    k: xorKey,
+    hop,
+    A: equation.a,
+    B: equation.b,
+  };
   if (clientChallenge.ok) response.check = createChallengeResponse(clientChallenge.values);
   return res.status(200).json(response);
 }
@@ -542,13 +600,25 @@ async function handleVerify(req, res, ip) {
 // ═══ /api/script ═══
 async function handleScript(req, res, ip) {
   const xorKey = process.env.PAYLOAD_XOR_KEY || '';
-  const { ticket, Data, scriptName } = req.body || {};
+  const { ticket, Data, scriptName, hop, eq } = req.body || {};
 
   if (typeof ticket !== 'string' || ticket.length > 4096)
     return res.status(400).json({ Valid: false, reason: 'ticket required' });
 
   const payload = verifyTicket(ticket);
   if (!payload) return res.status(401).json({ Valid: false, reason: 'invalid ticket' });
+
+  // One-time hop from /api/verify: proves this request follows a real
+  // verification instead of replaying a captured ticket.
+  const hopEntry = consumeHop(hop, payload.jti);
+  if (!hopEntry) {
+    noteEvent('script_reject', 'missing or replayed hop');
+    return res.status(409).json({ Valid: false, reason: 'hop required' });
+  }
+  if (!checkEquationAnswer({ answer: hopEntry.answer }, eq)) {
+    noteEvent('script_reject', 'equation answer wrong');
+    return res.status(409).json({ Valid: false, reason: 'equation rejected' });
+  }
   if (payload.scope !== 'script')
     return res.status(403).json({ Valid: false, reason: 'scope' });
 
@@ -620,9 +690,12 @@ async function handleScript(req, res, ip) {
 
   const check = createChallengeResponse(rngChallenge.values);
 
+  const nextHop = issueHop(payload.jti, { hwidHash: payload.hwidHash });
+
   return res.status(200).json(encodeProtectedPayload({
     Valid: true,
     check,
+    hop: nextHop,
     Body: scriptBody,
     ServerId: payload.jti,
     ScriptId: name,
@@ -650,7 +723,7 @@ function rejectRuntimeVerification(res, status, category) {
 }
 
 async function handleScriptVerify(req, res) {
-  const { ticket, hwid, scriptToken, runtimeSecret, scriptName } = req.body || {};
+  const { ticket, hwid, scriptToken, runtimeSecret, scriptName, hop } = req.body || {};
 
   if (typeof ticket !== 'string' || ticket.length > 4096) {
     return rejectRuntimeVerification(res, 400, 'D2_TICKET_MISSING');
@@ -658,6 +731,11 @@ async function handleScriptVerify(req, res) {
 
   const payload = verifyTicket(ticket);
   if (!payload) return rejectRuntimeVerification(res, 401, 'D2_TICKET_INVALID');
+
+  if (!consumeHop(hop, payload.jti)) {
+    noteEvent('runtime_reject', 'missing or replayed hop');
+    return rejectRuntimeVerification(res, 409, 'D2_HOP_MISSING');
+  }
   if (payload.scope !== 'script') return rejectRuntimeVerification(res, 403, 'D2_TICKET_SCOPE');
 
   const banReason = checkRevoked({ userId: payload.userId });

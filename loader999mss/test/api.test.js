@@ -106,7 +106,35 @@ async function main() {
   const script = await post('/api/script-verify', {
     ticket, hwid, scriptToken: 'x', runtimeSecret: 'y'.repeat(64), scriptName: 'main',
   });
-  assert.equal(script.status, 403); // token/secret mismatch is still enforced
+  assert.equal(script.status, 409, 'a missing hop is rejected before the proof check');
+  assert.equal((await script.json()).diagnostic, 'D2_HOP_MISSING');
+
+  const forgedHop = await post('/api/script-verify', {
+    ticket, hwid, scriptToken: 'x', runtimeSecret: 'y'.repeat(64), scriptName: 'main',
+    hop: 'f'.repeat(48),
+  });
+  assert.equal(forgedHop.status, 409, 'a guessed hop is rejected');
+
+  // ── /api/script refuses a ticket that never came through /api/verify ──
+  const noHop = await post('/api/script', { ticket, scriptName: 'main' });
+  assert.equal(noHop.status, 409, 'script requires a hop issued by verify');
+  assert.equal((await noHop.json()).reason, 'hop required');
+
+  const guessedHop = await post('/api/script', { ticket, scriptName: 'main', hop: 'a'.repeat(48), eq: 1 });
+  assert.equal(guessedHop.status, 409, 'a guessed hop is never accepted');
+  assert.equal((await guessedHop.json()).reason, 'hop required');
+
+  // The hop/equation primitives are one-time and bound to the ticket.
+  const sdk = require('../lib/999MS-server-sdk');
+  const jti = 'a'.repeat(24);
+  const firstHop = sdk.issueHop(jti, { answer: 42 });
+  assert.equal(sdk.consumeHop(firstHop, 'b'.repeat(24)), null, 'hop is bound to its ticket');
+  assert.equal(sdk.consumeHop(firstHop, jti).answer, 42, 'hop carries its metadata');
+  assert.equal(sdk.consumeHop(firstHop, jti), null, 'a burned hop cannot be reused');
+  const eq = sdk.createEquationChallenge();
+  assert.equal(sdk.checkEquationAnswer(eq, eq.answer), true);
+  assert.equal(sdk.checkEquationAnswer(eq, eq.answer + 1), false);
+  assert.equal(sdk.checkEquationAnswer(eq, String(eq.answer)), false);
   const invalid = await post('/api/script-verify', { ticket: 'bad' });
   assert.equal(invalid.status, 401); // malformed ticket is rejected before any proof check
 

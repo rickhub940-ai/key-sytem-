@@ -126,13 +126,14 @@ if not req then return Kick("[999MS] HTTP not supported") end
 local ok, res = pcall(req, {
     Url = BASE_URL .. "/api/script-verify",
     Method = "POST",
-    Headers = { ["Content-Type"] = "application/json" },
+    Headers = { ["Content-Type"] = "application/json", ["x-ms999-hwid"] = getHWID() },
     Body = HttpService:JSONEncode({
         ticket = Ticket,
         hwid = getHWID(),
         scriptToken = ScriptToken,
         runtimeSecret = RuntimeSecret,
         scriptName = ExpectedScript,
+        hop = getgenv().MS999Hop or "",
     }),
 })
 

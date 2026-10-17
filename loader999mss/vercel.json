@@ -35,6 +35,10 @@
       "dest": "/api/auth?action=control-traffic"
     },
     {
+      "src": "/api/control/events",
+      "dest": "/api/auth?action=control-events"
+    },
+    {
       "src": "/payload\\.lua",
       "dest": "/api/auth?action=payload"
     },

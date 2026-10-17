@@ -261,6 +261,16 @@
         </div>
         <div id="traceHost"><div class="empty">ยังไม่มีข้อมูล</div></div>
       </section>
+
+      <section class="card">
+        <div class="card-h">
+          <h2>เหตุการณ์ความปลอดภัย</h2>
+          <span class="pill" id="eventCount">0</span>
+          <span class="spacer"></span>
+          <span class="pill hide-sm">hop / hwid / ban</span>
+        </div>
+        <div id="eventHost"><div class="empty">ยังไม่มีเหตุการณ์</div></div>
+      </section>
     </div>
 
     <div class="stack">
@@ -373,6 +383,12 @@
     if (!token) { gateErr.textContent = 'กรุณาใส่ token'; return; }
     $('loginBtn').disabled = true;
     state.token = token;
+    api('/api/control/events', { limit: 40 }).then(function (result) {
+      if (result.status !== 200 || !result.data) return;
+      $('eventCount').textContent = String(result.data.count || 0);
+      renderEvents(result.data.events || []);
+    }).catch(function () {});
+
     api('/api/control/bans').then(function (result) {
       $('loginBtn').disabled = false;
       if (result.status === 401) {
@@ -453,6 +469,25 @@
     if (code >= 200 && code < 300) return 'tag';
     if (code >= 300 && code < 400) return 'tag warn';
     return 'tag bad';
+  }
+
+  function renderEvents(list) {
+    var host = $('eventHost');
+    if (!list.length) {
+      host.innerHTML = '<div class="empty">ยังไม่มีเหตุการณ์</div>';
+      return;
+    }
+    var tone = { verify_reject: 'bad', script_reject: 'bad', runtime_reject: 'bad', hwid_spoof: 'bad', ban_hit: 'warn' };
+    var rows = list.map(function (row) {
+      var time = new Date(row.ts).toLocaleTimeString('th-TH');
+      return '<tr>' +
+        '<td class="mono" style="font-size:.76rem;white-space:nowrap">' + esc(time) + '</td>' +
+        '<td><span class="' + (tone[row.kind] || 'tag') + '">' + esc(row.kind || '') + '</span></td>' +
+        '<td class="mono" style="font-size:.78rem">' + esc(row.detail || '') + '</td>' +
+      '</tr>';
+    }).join('');
+    host.innerHTML = '<div style="overflow:auto;max-height:240px"><table><thead><tr>' +
+      '<th>เวลา</th><th>ประเภท</th><th>รายละเอียด</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
   function renderTraffic(list) {

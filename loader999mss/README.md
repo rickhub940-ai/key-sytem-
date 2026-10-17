@@ -136,3 +136,21 @@ local marker = MN0
 - ไบต์ของ Stage 2 คงที่ทุก request → เอาโค้ดไป obfuscate ได้โดยไม่กระทบ hash pin
 - เก็บ `local NEXT_LINK = ...` ไว้ **เหนือบล็อกที่จะ obfuscate** แล้ว obfuscate ส่วนที่เหลือ
 - ค่าที่สแกนหา = ตัว literal ใน `NEXT_LINK` (มี `/x/<40 hex>` ฝังอยู่ จึงไม่ซ้ำกับโค้ดอื่น)
+
+## 2026-10-17 — ยกเทคนิคจาก 3 references (hop chain / equation / HWID header / events)
+
+อ้างอิง: ชุดบทความ whitelist ของ shiawase, `zoolah/Luasec`, `loris1337/Roblox-Whitelist-System`
+เลือกมาเฉพาะข้อที่เข้ากับเชน Lua แบบอ่านออก (ไม่ใช้ `getrawmetatable`/`hookmetamethod`/`NfCrash`)
+
+| เทคนิค | มาจาก | อยู่ที่ |
+| --- | --- | --- |
+| hop แบบใช้ครั้งเดียว ผูกกับ `jti` ของ ticket | Luasec, loris | `lib/999MS-server-sdk.js` (`issueHop`/`consumeHop`) |
+| สมการ `A = 2x−32`, `B = 5x+256` แล้วตอบด้วย `Equate(x)` | loris (`equate`) | `/api/verify` → `/api/script` |
+| HWID ต้องมากับ header ด้วย ไม่ตรงกับ body = ปฏิเสธ | Luasec (`hwidMiddleware`) | `x-ms999-hwid` |
+| challenge RNG ที่ต้องกลับ transform ได้ | shiawase | มีอยู่แล้ว, ตอนนี้บังคับใช้ทั้ง verify และ script |
+| ตัวนับขั้น (Step) ต้องครบก่อนโหลด body | Luasec (`JumpCounter`) | `source/payload.lua` |
+| JSON decoder ของตัวเอง (เลี่ยง hook `JSONDecode`) | shiawase | `JsonDecode` / `EncodeJson` |
+| event log + แบนมีวันหมดอายุ | loris (`blacklistedFor`) | `/api/control/events` + การ์ดใน `/control` |
+| kick แบบ crash แทน `while true do end` | shiawase | มีอยู่แล้ว (`SecureCrash`) |
+
+ลำดับطلب: `/api/verify` (ได้ `hop`, `A`, `B`) → `/api/script` (เผา hop, ตรวจสมการ, คืน `hop` ใหม่ในซองเข้ารหัส) → `/api/script-verify` (เผา hop ใบที่สอง)

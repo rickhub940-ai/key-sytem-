@@ -197,6 +197,10 @@ local Gmatch = ("").gmatch
 local ServerId = ""
 local XORKey = ""
 local Ticket = ""
+-- Every guarded stage bumps this. A chapter that is skipped (early return
+-- injected by a hook) leaves the count short and is caught at the hand-off.
+local Step = 0
+local STEP_TARGET = 4
 local HttpRequest = nil
 local HeartbeatAlive = false
 local ChecksActive = true
@@ -234,6 +238,7 @@ local function StopChecks()
     env.MS999Token = nil
     env.MS999Secret = nil
     env.MS999Session = nil
+    env.MS999Hop = nil
     env.MS999Script = nil
     env.MS999LoadTime = nil
     env.MS999Signal = nil
@@ -270,12 +275,13 @@ local function TamperKick(code)
 end
 
 local function SecureEQ(a, b)
+    if type(a) ~= type(b) then return false end
     local T = {}
     if a ~= b then return false end
     T[a] = 3569
-    if not T[b] == 3569 then return false end
+    if T[b] ~= 3569 then return false end
     T[b] = nil
-    if not T[a] == nil then return false end
+    if T[a] ~= nil then return false end
     return true
 end
 
@@ -515,13 +521,151 @@ local function R5()
     return Equate(((r9 ~= 0) and (m * r9) or m) + E6() + r10)
 end
 
+-- ═══ JSON (own decoder) ═══
+-- Parsing the response with our own decoder means a hook on
+-- HttpService:JSONDecode cannot rewrite a rejection into an approval.
+local JsonDecode
+do
+    local escapes = { ["b"] = "\b", ["f"] = "\f", ["n"] = "\n", ["r"] = "\r", ["t"] = "\t", ['"'] = '"', ["\\"] = "\\", ["/"] = "/" }
+    local function skip(text, index)
+        while true do
+            local ch = text:sub(index, index)
+            if ch == " " or ch == "\t" or ch == "\n" or ch == "\r" then index = index + 1 else break end
+        end
+        return index
+    end
+    local parseValue
+    local function parseString(text, index)
+        local out = {}
+        index = index + 1
+        while true do
+            local ch = text:sub(index, index)
+            if ch == "" then error("unterminated string") end
+            if ch == '"' then return table.concat(out), index + 1 end
+            if ch == "\\" then
+                local code = text:sub(index + 1, index + 1)
+                if code == "u" then
+                    local hex = text:sub(index + 2, index + 5)
+                    local num = tonumber(hex, 16) or 63
+                    out[#out + 1] = Char(num)
+                    index = index + 6
+                else
+                    out[#out + 1] = escapes[code] or code
+                    index = index + 2
+                end
+            else
+                out[#out + 1] = ch
+                index = index + 1
+            end
+        end
+    end
+    local function parseNumber(text, index)
+        local raw = text:match("^-?%d+%.?%d*[eE]?[-+]?%d*", index)
+        if not raw or raw == "" then error("bad number") end
+        return tonumber(raw), index + #raw
+    end
+    local function parseTable(text, index)
+        index = skip(text, index + 1)
+        local result = {}
+        if text:sub(index, index) == "]" then return result, index + 1 end
+        local position = 1
+        while true do
+            local value
+            value, index = parseValue(text, index)
+            result[position] = value
+            position = position + 1
+            index = skip(text, index)
+            local ch = text:sub(index, index)
+            index = index + 1
+            if ch == "]" then return result, index end
+            if ch ~= "," then error("bad array") end
+            index = skip(text, index)
+        end
+    end
+    local function parseObject(text, index)
+        index = skip(text, index + 1)
+        local result = {}
+        if text:sub(index, index) == "}" then return result, index + 1 end
+        while true do
+            local key
+            key, index = parseString(text, index)
+            index = skip(text, index)
+            if text:sub(index, index) ~= ":" then error("bad object") end
+            index = skip(text, index + 1)
+            local value
+            value, index = parseValue(text, index)
+            result[key] = value
+            index = skip(text, index)
+            local ch = text:sub(index, index)
+            index = index + 1
+            if ch == "}" then return result, index end
+            if ch ~= "," then error("bad object") end
+            index = skip(text, index)
+        end
+    end
+    parseValue = function(text, index)
+        index = skip(text, index)
+        local ch = text:sub(index, index)
+        if ch == "{" then return parseObject(text, index) end
+        if ch == "[" then return parseTable(text, index) end
+        if ch == '"' then return parseString(text, index) end
+        if ch == "t" then return true, index + 4 end
+        if ch == "f" then return false, index + 5 end
+        if ch == "n" then return nil, index + 4 end
+        return parseNumber(text, index)
+    end
+    JsonDecode = function(text)
+        if type(text) ~= "string" or #text == 0 then return nil end
+        local ok, value = pcall(function() return (parseValue(text, 1)) end)
+        if not ok then return nil end
+        return value
+    end
+end
+
+local function EncodeJson(value)
+    local kind = type(value)
+    if kind == "nil" then return "null" end
+    if kind == "boolean" then return tostring(value) end
+    if kind == "number" then
+        -- tostring() truncates at 14 significant digits, which would round the
+        -- challenge values (they run up to 1e14). Emit integers exactly.
+        if value ~= value or value == math.huge or value == -math.huge then return "null" end
+        if value % 1 == 0 and Abs(value) < 2 ^ 53 then return string.format("%.0f", value) end
+        return string.format("%.17g", value)
+    end
+    if kind == "string" then
+        return '"' .. value:gsub('[%z\1-\31\\"]', function(ch)
+            local map = { ['"'] = '\\"', ["\\"] = "\\\\", ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t" }
+            return map[ch] or string.format("\\u%04x", ch:byte())
+        end) .. '"'
+    end
+    if kind == "table" then
+        if #value > 0 then
+            local parts = {}
+            for index = 1, #value do parts[index] = EncodeJson(value[index]) end
+            return "[" .. table.concat(parts, ",") .. "]"
+        end
+        local parts = {}
+        for key, item in pairs(value) do
+            parts[#parts + 1] = EncodeJson(tostring(key)) .. ":" .. EncodeJson(item)
+        end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    return "null"
+end
+
 -- ═══ POST ═══
 local function postJSON(path, payload)
+    -- The HWID also travels in a header: the server rejects a request whose
+    -- header and body disagree, which catches in-flight body rewrites.
+    local headers = { ["Content-Type"] = "application/json" }
+    local hwid = GetHWID()
+    if type(hwid) == "string" and #hwid > 0 then headers["x-ms999-hwid"] = hwid end
     local ok, res = pcall(HttpRequest, {
         Url = BASE_URL .. path,
         Method = "POST",
-        Headers = { ["Content-Type"] = "application/json" },
-        Body = HttpService:JSONEncode(payload),
+        Headers = headers,
+        Body = EncodeJson(payload),
     })
     if not ok or type(res) ~= "table" then return nil, "Connection failed" end
     local status = res.StatusCode or res.Status
@@ -529,14 +673,13 @@ local function postJSON(path, payload)
     if type(status) ~= "number" or type(responseBody) ~= "string" then
         return nil, "Malformed response"
     end
-    local decoded
-    local ok2 = pcall(function() decoded = HttpService:JSONDecode(responseBody) end)
-    if not ok2 then return nil, "Invalid response" end
-    return { status = status, data = decoded, body = res.Body or "" }, nil
+    local decoded = JsonDecode(responseBody)
+    if type(decoded) ~= "table" then return nil, "Invalid response" end
+    return { status = status, data = decoded, body = responseBody }, nil
 end
 
 local function EncodeBody(tbl)
-    local json = HttpService:JSONEncode(tbl)
+    local json = EncodeJson(tbl)
     local encrypted = Xor(json, XORKey)
     local b64 = Base64(encrypted)
     local full = XORKey .. b64
@@ -565,6 +708,7 @@ local function LoadScript(decrypted, key)
     getgenv().MS999Token    = decrypted.ScriptToken or ""
     getgenv().MS999Secret   = RuntimeSecret
     getgenv().MS999Session  = decrypted.ServerId or ""
+    getgenv().MS999Hop      = decrypted.hop or ""
     getgenv().MS999Script   = SCRIPT_NAME_LOCKED
     getgenv().MS999LoadTime = tick()
     getgenv().Key            = key
@@ -575,6 +719,13 @@ local function LoadScript(decrypted, key)
     if _G.MS999_UI then pcall(function() _G.MS999_UI:Destroy() end); _G.MS999_UI = nil end
 
     print("[999MS] Loading main script...")
+
+    -- Every guarded stage above bumped Step. A hook that short-circuits one of
+    -- them leaves the count short, so the hand-off refuses to run.
+    if Step ~= STEP_TARGET then
+        TamperKick("S9")
+        return
+    end
 
     local chunk = SafeLoadstring(decrypted.Body)
     if not chunk then return KickPlayer("Load failed", 0) end
@@ -598,10 +749,22 @@ local function FetchAndLoad(key, sname)
     local hwid = GetHWID()
     local userId = tostring(Players.LocalPlayer.UserId)
 
+    Step = Step + 1
+
+    -- Generate the challenge before the first call: the server transforms these
+    -- values and we invert the transform to prove the response is genuine.
+    local rng = {
+        Rng1 = Floor(R1()), Rng2 = Floor(R2()), Rng3 = Floor(R3()),
+        Rng4 = Floor(R4()), Rng5 = Floor(R5()),
+        RngFloat = math.random(1, 1000000) + math.random(),
+    }
+
     print("[999MS] Verifying key...")
 
     local r1, err = postJSON("/api/verify", {
         key = key, hwid = hwid, userId = userId, scriptName = sname,
+        Rng1 = rng.Rng1, Rng2 = rng.Rng2, Rng3 = rng.Rng3,
+        Rng4 = rng.Rng4, Rng5 = rng.Rng5, RngFloat = rng.RngFloat,
     })
 
     if not r1 then return nil, err or "Connection failed" end
@@ -615,18 +778,40 @@ local function FetchAndLoad(key, sname)
 
     Ticket = r1.data.ticket
     XORKey = r1.data.k or ""
+    Step = Step + 1
+
+    -- Invert the server-side transforms. A hooked or replayed response cannot
+    -- carry the correct pair for values it never saw.
+    if type(r1.data.check) == "string" then
+        local parts = Split(r1.data.check, "|")
+        if #parts ~= 5 then return nil, "Bad challenge" end
+        for index = 1, 5 do
+            local restored = RestoreChallenge(index, tonumber(parts[index]))
+            if restored ~= ({ rng.Rng1, rng.Rng2, rng.Rng3, rng.Rng4, rng.Rng5 })[index] then
+                Step = Step - 47
+                return nil, "Challenge mismatch"
+            end
+        end
+        Step = Step + 1
+    else
+        return nil, "Missing challenge"
+    end
+
+    -- Equation: A = 2x - 32 and B = 5x + 256 are two views of the same secret.
+    local fromA = (tonumber(r1.data.A) + 32) / 2
+    local fromB = (tonumber(r1.data.B) - 256) / 5
+    if type(fromA) ~= "number" or fromA ~= fromB or fromA % 1 ~= 0 then
+        return nil, "Equation mismatch"
+    end
+    local equationAnswer = Equate(fromA)
 
     print("[999MS] Key verified")
 
-    local rng = {
-        Rng1 = Floor(R1()), Rng2 = Floor(R2()), Rng3 = Floor(R3()),
-        Rng4 = Floor(R4()), Rng5 = Floor(R5()),
-        -- Kept as a non-integer for the server-side challenge sanity check.
-        RngFloat = math.random(1, 1000000) + math.random(),
-    }
     local body = EncodeBody(rng)
     body.ticket = Ticket
     body.scriptName = sname
+    body.hop = r1.data.hop
+    body.eq = equationAnswer
 
     local r2, err2 = postJSON("/api/script", body)
     if not r2 then return nil, err2 or "Script fetch failed" end
@@ -640,7 +825,7 @@ local function FetchAndLoad(key, sname)
         local raw = ""
         for _, b in ipairs(resp.Data) do raw = raw .. Char(b) end
         local b64 = raw:sub(#XORKey + 1)
-        return HttpService:JSONDecode(Xor(Base64Decode(b64), XORKey))
+        return JsonDecode(Xor(Base64Decode(b64), XORKey))
     end)
 
     if not okDec or type(decrypted) ~= "table" then return nil, "Decode failed" end
@@ -655,9 +840,11 @@ local function FetchAndLoad(key, sname)
     for index = 1, 5 do
         local restored = RestoreChallenge(index, tonumber(parts[index]))
         if restored == nil or not SecureEQ(restored, rngOriginals[index]) then
+            Step = Step - 47
             return nil, "RNG check failed"
         end
     end
+    Step = Step + 1
 
     authScope = authScope + 1
     if authScope ~= 3 then return nil, "Authentication flow interrupted" end
