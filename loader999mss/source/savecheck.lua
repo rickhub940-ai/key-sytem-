@@ -1,5 +1,12 @@
 -- Stage 2: remove dumped copies of this checker, then terminate.
-local MN0 = "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904"
+-- ═══ HEADER ═══ kept verbatim and outside the compacted body.
+-- Holds the two things that identify a dumped copy of this stage: the guard
+-- literal (marker) and the request for the next stage link.
+local gamaramam = {
+    "@BASE_URL@/x/6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904",
+    "@BASE_URL@/api/stage-pickup?t=",
+}
+-- ═══ BODY ═══ everything below is compacted at build time.
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
@@ -63,6 +70,13 @@ local function Kick(reason)
 end
 
 local BASE_URL = "@BASE_URL@"
+local function isCopy(text)
+    if type(text) ~= "string" then return false end
+    for index = 1, #gamaramam do
+        if text:find(gamaramam[index], 1, true) then return true end
+    end
+    return false
+end
 local CHAIN_VERSION = "999MS-chain-v1"
 local CHAIN_TTL = 20
 
@@ -97,8 +111,7 @@ local function removeMarkedFiles()
         return false
     end
 
-    -- Trace how this build was copied: match the guard literal itself.
-    local marker = MN0
+    -- Trace how this build was copied; either half is enough to match.
     local pending = { "." }
     local seen = {}
     local matches = {}
@@ -119,8 +132,7 @@ local function removeMarkedFiles()
                         local readOk, content = false, nil
                         if not fileCheck or isFile then
                             readOk, content = pcall(RealReadFile, entry)
-                            if readOk and type(content) == "string"
-                                and content:find(marker, 1, true) then
+                            if readOk and isCopy(content) then
                                 table.insert(matches, entry)
                             end
                         end
@@ -168,10 +180,12 @@ oldWrite = hookfunction(target, newcclosure(function(path, contents, ...)
     local success = result[1] and result[2] ~= false
 
     if success and env.MS999ChecksActive ~= false then
+        local copied = isCopy(contents)
         saved:Fire({
             api = "writefile",
             path = tostring(path),
             bytes = typeof(contents) == "string" and #contents or nil,
+            copied = copied,
         })
     end
 
@@ -193,7 +207,8 @@ saveConnection = saved:Connect(function(event)
     end
 
     pcall(function()
-        Kick("[999MS] Source save detected: " .. tostring(event.path))
+        local why = event.copied and "copy" or "write"
+        Kick("[999MS] Source save detected: " .. tostring(event.path) .. " (" .. why .. ")")
     end)
     task.wait(0.3)
     if NfCrash then NfCrash() else while true do end end

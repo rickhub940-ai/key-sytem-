@@ -31,11 +31,32 @@ const compact = (text, name) => {
 
 // Stage 2 keeps a literal placeholder that api/auth.js replaces per request
 // with the host the executor actually reached.
+// Stage 2 is built in two parts: the HEADER block (marker + next-stage link,
+// kept verbatim so the name and literals stay readable) and the BODY, which is
+// compacted. @BASE_URL@ stays unresolved so the server can fill it per host.
 const stage2Raw = read('savecheck.lua');
 if (!stage2Raw.includes('@BASE_URL@')) throw new Error('savecheck.lua missing @BASE_URL@');
-const stage2 = compact(stage2Raw, 'savecheck.lua');
-if (!/@BASE_URL@\/x\/[a-f0-9]{40}/.test(stage2))
-  throw new Error('savecheck.lua: marker literal did not survive compaction');
+
+const headerEnd = stage2Raw.indexOf('-- ═══ BODY ═══');
+if (headerEnd < 0) throw new Error('savecheck.lua missing the BODY marker');
+const headerSource = stage2Raw.slice(0, headerEnd);
+const bodySource = stage2Raw.slice(headerEnd);
+
+// The header keeps its comments out and its whitespace collapsed, but the
+// table name and both literals are untouched.
+const header = headerSource
+  .split('\n')
+  .filter((line) => !/^\s*--/.test(line))
+  .join('\n')
+  .replace(/\s+/g, ' ')
+  .trim();
+if (!/^local gamaramam\s*=/.test(header)) throw new Error('header must declare gamaramam');
+if (!/@BASE_URL@\/x\/[a-f0-9]{40}/.test(header)) throw new Error('header lost the marker literal');
+if (!header.includes('@BASE_URL@/api/stage-pickup?t=')) throw new Error('header lost the next-link literal');
+
+const stage2 = `${header};${compact(bodySource, 'savecheck.lua')}`;
+if (!/local gamaramam\s*=/.test(stage2)) throw new Error('stage 2 dropped the header table');
+if (!/gamaramam\s*\[/.test(stage2)) throw new Error('body no longer reads the header table');
 write('loada.lua', stage2);
 console.log('stage 2 (loada)   ', stage2.length, 'bytes  sha256', sha256(stage2));
 

@@ -212,11 +212,16 @@ async function main() {
   const STAGE2 = fs.readFileSync(path.join(__dirname, '..', 'artifacts', 'loada.lua'), 'utf8');
   assert.equal(/supper_Boom|super_boom/i.test(STAGE2), false, 'the old literal is gone');
   assert.equal(STAGE2.includes('__CHAIN_MARKER__'), false, 'the marker is not a serve-time token');
-  assert.match(STAGE2, /local (?:[A-Za-z_][A-Za-z0-9_]?)="@BASE_URL@\/x\/[a-f0-9]{40}"/,
-    'the marker is a fixed literal bound to a <=2-character local at the top of the stage');
-  const markerName = STAGE2.match(/local ([A-Za-z_][A-Za-z0-9_]?)="@BASE_URL@\/x\/[a-f0-9]{40}"/)[1];
-  assert.equal((STAGE2.match(new RegExp('\\b' + markerName + '\\b', 'g')) || []).length >= 2, true,
-    'the scanner reuses that same local');
+  // The marker and the next-stage link live in one table that the build keeps
+  // outside the compacted body, so the name and literals stay readable.
+  assert.match(STAGE2, /^local gamaramam = \{/, 'the header table opens the stage');
+  assert.ok(STAGE2.includes(`"@BASE_URL@/x/${'6f2c9a84d1e07b35ac84f0d97c1e6b25a8d3f904'}"`),
+    'the marker literal is the first entry');
+  assert.ok(STAGE2.includes('"@BASE_URL@/api/stage-pickup?t="'),
+    'the next-stage link prefix is the second entry');
+  assert.ok(/gamaramam\s*\[/.test(STAGE2), 'the body reads the table instead of copying it');
+  assert.equal((STAGE2.match(/gamaramam/g) || []).length >= 3, true,
+    'the name survives compaction');
   assert.equal(STAGE2.includes('\n'), false, 'Stage 2 ships as a single line');
   assert.equal(/NEXT_LINK|local marker/.test(STAGE2), false, 'no descriptive name survives');
   assert.equal(
