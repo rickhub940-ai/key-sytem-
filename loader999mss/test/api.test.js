@@ -50,6 +50,19 @@ async function main() {
     child.once('error', reject);
   });
 
+  // ── WeAreDevs response shapes ──
+  // The documented reply is {"obfuscated": "..."} with no success flag; the
+  // live endpoint also sends success:true. Both must be accepted, and an
+  // explicit failure must not be.
+  const { parsePayload } = require('../lib/obfuscate');
+  const luaBody = '--[[ v1.0.0 https://wearedevs.net/obfuscator ]] return ' + 'x'.repeat(120);
+  assert.equal(parsePayload(JSON.stringify({ obfuscated: luaBody })), luaBody,
+    'accepts the documented reply without a success flag');
+  assert.equal(parsePayload(JSON.stringify({ success: true, obfuscated: luaBody })), luaBody);
+  assert.equal(parsePayload(JSON.stringify({ success: false, obfuscated: luaBody })), null);
+  assert.equal(parsePayload(luaBody), luaBody, 'accepts a plain Lua body');
+  assert.equal(parsePayload('{"error":"nope"}'), null, 'rejects an unexpected payload');
+
   // ── health ──
   const health = await fetch(`http://127.0.0.1:${port}/api/health`);
   assert.equal(health.status, 200);

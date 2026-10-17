@@ -50,6 +50,32 @@ function obfuscateLocally(source) {
   }
 }
 
+// The endpoint answers `{"obfuscated": "..."}`; some deployments add a
+// `success` flag and others omit it, so only an explicit false is a failure.
+// A plain Lua body is accepted too.
+function parsePayload(text) {
+  if (typeof text !== 'string') return null;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+
+  if (trimmed.startsWith('{')) {
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+    if (!parsed || parsed.success === false) return null;
+    const output = parsed.obfuscated;
+    return typeof output === 'string' && output.length >= 100 ? output : null;
+  }
+
+  if (trimmed.startsWith('--') || trimmed.startsWith('return') || trimmed.startsWith('local')) {
+    return trimmed.length >= 100 ? trimmed : null;
+  }
+  return null;
+}
+
 const RETRY_DELAYS_MS = (process.env.WEARE_API_RETRY_MS || '500,1200,2000')
   .split(',').map((v) => Number(v)).filter((v) => Number.isFinite(v) && v >= 0);
 
@@ -76,11 +102,8 @@ async function postOnce(source) {
     throw error;
   }
   if (!response.ok) throw new Error('HTTP ' + response.status);
-  const payload = await response.json();
-  const output = payload && payload.obfuscated;
-  if (payload?.success !== true || typeof output !== 'string' || output.length < 100) {
-    throw new Error('unexpected response');
-  }
+  const output = parsePayload(await response.text());
+  if (!output) throw new Error('unexpected response');
   return output;
 }
 
@@ -126,4 +149,4 @@ async function obfuscateStageOne(source) {
   return result;
 }
 
-module.exports = { obfuscateStageOne, obfuscationBudgetMs };
+module.exports = { obfuscateStageOne, obfuscationBudgetMs, parsePayload };
