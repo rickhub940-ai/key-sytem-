@@ -66,10 +66,14 @@ end
 local HttpService = game:GetService("HttpService")
 local ExpectedScript = "${SCRIPTID}"
 local CHAIN_VERSION = "999MS-chain-v1"
+local A, B, C, D, E, F, G, H, I, J, K = ...
 
-local ChainEnv = getgenv()
-local Chain = ChainEnv.MS999Chain
-if type(Chain) ~= "table"
+if A ~= true then return Kick("[999MS] Must run via loader") end
+local ChainEnv = K
+local Chain = J
+if type(ChainEnv) ~= "table"
+    or type(Chain) ~= "table"
+    or ChainEnv.MS999Chain ~= Chain
     or Chain.Version ~= CHAIN_VERSION
     or type(Chain.Id) ~= "string"
     or Chain.Stage ~= "script"
@@ -80,60 +84,47 @@ if type(Chain) ~= "table"
     return Kick("[999MS] Chain rejected: run loadc.lua")
 end
 
-if not getgenv().MS999Loader then
-    return Kick("[999MS] Must run via loader")
-end
-
-local RuntimeSecret = getgenv().MS999Secret
-local Ticket = getgenv().MS999Ticket
-local ScriptToken = getgenv().MS999Token
-local MS999Script = getgenv().MS999Script
+local RuntimeSecret = D
+local Ticket = B
+local ScriptToken = C
+local MS999Script = F
+local LoadTime = G
 
 if type(RuntimeSecret) ~= "string" or #RuntimeSecret ~= 64 then
     return Kick("[999MS] Missing runtime secret")
 end
-if not Ticket or not ScriptToken then
+if type(Ticket) ~= "string" or Ticket == ""
+    or type(ScriptToken) ~= "string" or ScriptToken == "" then
     return Kick("[999MS] Invalid session")
 end
 if MS999Script ~= ExpectedScript then
     return Kick("[999MS] Script mismatch")
 end
 
-local LoadTime = getgenv().MS999LoadTime
-if not LoadTime or (tick() - LoadTime) > 60 then
+if type(LoadTime) ~= "number" or tick() - LoadTime < 0 or (tick() - LoadTime) > 60 then
     return Kick("[999MS] Session expired")
 end
 
-local function getHWID()
-    if type(gethwid) == "function" then
-        local ok, v = pcall(gethwid)
-        if ok and type(v) == "string" and #v > 0 then return v end
-    end
-    local lp = Players.LocalPlayer
-    return tostring(lp.UserId) .. "|" .. tostring(lp.AccountAge) .. "|" .. tostring(game.PlaceId or 0)
+local HWID = H
+if type(HWID) ~= "string" or #HWID < 4 or #HWID > 512 then
+    return Kick("[999MS] Device context invalid")
 end
 
-local function getRequest()
-    local captured = getgenv().MS999Request
-    if type(captured) == "function" then return captured end
-    return (syn and syn.request) or (http and http.request) or request or http_request
-end
-
+local req = I
+if type(req) ~= "function" then return Kick("[999MS] HTTP not supported") end
 local BASE_URL = "https://loader999mss.vercel.app"
-local req = getRequest()
-if not req then return Kick("[999MS] HTTP not supported") end
 
 local ok, res = pcall(req, {
     Url = BASE_URL .. "/api/script-verify",
     Method = "POST",
-    Headers = { ["Content-Type"] = "application/json", ["x-ms999-hwid"] = getHWID() },
+    Headers = { ["Content-Type"] = "application/json", ["x-ms999-hwid"] = HWID },
     Body = HttpService:JSONEncode({
         ticket = Ticket,
-        hwid = getHWID(),
+        hwid = HWID,
         scriptToken = ScriptToken,
         runtimeSecret = RuntimeSecret,
         scriptName = ExpectedScript,
-        hop = getgenv().MS999Hop or "",
+        hop = E or "",
     }),
 })
 

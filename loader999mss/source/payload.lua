@@ -193,6 +193,11 @@ print("[999MS] Payload L1-L6 passed")
 local SCRIPT_NAME = E0.script or _G.script or "main"
 local SCRIPT_NAME_LOCKED = SCRIPT_NAME
 local USER_KEY = E0.Key or _G.Key or ""
+local E1 = ""
+-- Capture the caller's one-shot key locally; never keep or re-publish it in
+-- the shared executor environment.
+E0.Key = nil
+_G.Key = nil
 
 local Char = ("").char
 local Byte = ("").byte
@@ -298,22 +303,33 @@ local function Split(str, sep)
 end
 
 local function GetHWID()
-    -- Preserve the existing Platoboost identifier so already-bound keys keep
-    -- using the same device value. The client value is not an attestation.
-    if type(gethwid) == "function" then
-        local ok, v = pcall(gethwid)
-        if ok and type(v) == "string" and #v > 0 and #v <= 512 then return v end
+    -- Only accept executor-native getters. A Lua callback from getgenv/_G is
+    -- caller-controlled and must never become the device binding.
+    local fs = {}
+    local f = type(syn) == "table" and syn.get_hwid or nil
+    if f then fs[#fs + 1] = f end
+    f = get_hwid
+    if f then fs[#fs + 1] = f end
+    f = gethwid
+    if f then fs[#fs + 1] = f end
+    for _, f in ipairs(fs) do
+        if type(f) == "function" then
+            local o, i = pcall(RealDebugGetInfo, f)
+            if o and type(i) == "table" and i.what == "C" then
+                local h = false
+                if type(RealIsHooked) == "function" then
+                    local q
+                    q, h = pcall(RealIsHooked, f)
+                    if not q then h = true end
+                end
+                if not h then
+                    local q, v = pcall(f)
+                    if q and type(v) == "string" and #v >= 4 and #v <= 512 then return v end
+                end
+            end
+        end
     end
-    if syn and type(syn.get_hwid) == "function" then
-        local ok, v = pcall(syn.get_hwid)
-        if ok and type(v) == "string" and #v > 0 then return v end
-    end
-    if type(get_hwid) == "function" then
-        local ok, v = pcall(get_hwid)
-        if ok and type(v) == "string" and #v > 0 then return v end
-    end
-    local lp = Players.LocalPlayer
-    return tostring(lp.UserId) .. "|" .. tostring(lp.AccountAge) .. "|" .. tostring(game.PlaceId or 0)
+    return nil
 end
 
 -- ═══ T2-T19 ═══
@@ -661,12 +677,12 @@ local function EncodeJson(value)
 end
 
 -- ═══ POST ═══
-local function postJSON(path, payload)
-    -- The HWID also travels in a header: the server rejects a request whose
-    -- header and body disagree, which catches in-flight body rewrites.
-    local headers = { ["Content-Type"] = "application/json" }
-    local hwid = GetHWID()
-    if type(hwid) == "string" and #hwid > 0 then headers["x-ms999-hwid"] = hwid end
+local function postJSON(path, payload, hwid)
+    -- Reuse the exact native device value from this login for every request.
+    if type(hwid) ~= "string" or #hwid < 4 or #hwid > 512 then
+        return nil, "Trusted executor device ID unavailable"
+    end
+    local headers = { ["Content-Type"] = "application/json", ["x-ms999-hwid"] = hwid }
     local ok, res = pcall(HttpRequest, {
         Url = BASE_URL .. path,
         Method = "POST",
@@ -695,32 +711,32 @@ local function EncodeBody(tbl)
 end
 
 -- ═══ Load & Run ═══
-local function LoadScript(decrypted, key)
+local function LoadScript(d, h)
     if not ChecksActive then return end
     if not chainIs("payload", CHAIN_SESSION_TTL) then
         return KickPlayer("[999MS] Chain expired before script", 0)
+    end
+    if type(h) ~= "string" or #h < 4 or #h > 512 then
+        return KickPlayer("Invalid device context", 0)
     end
     Chain.Stage = "script"
     Chain.Script = SCRIPT_NAME_LOCKED
     Chain.UpdatedAt = tick()
 
-    local RuntimeSecret = decrypted.RuntimeSecret or ""
-    if type(RuntimeSecret) ~= "string" or #RuntimeSecret ~= 64 then
+    local r = d.RuntimeSecret or ""
+    local s = d.ScriptToken or ""
+    local p = d.hop or ""
+    local q = Ticket
+    if type(r) ~= "string" or #r ~= 64 then
         return KickPlayer("Invalid runtime secret", 0)
     end
+    if type(q) ~= "string" or q == ""
+        or type(s) ~= "string" or s == ""
+        or type(p) ~= "string" or p == "" then
+        return KickPlayer("Invalid session context", 0)
+    end
 
-    E0.MS999Loader   = true
-    E0.MS999Ticket   = Ticket
-    E0.MS999Token    = decrypted.ScriptToken or ""
-    E0.MS999Secret   = RuntimeSecret
-    E0.MS999Session  = decrypted.ServerId or ""
-    E0.MS999Hop      = decrypted.hop or ""
-    E0.MS999Script   = SCRIPT_NAME_LOCKED
-    E0.MS999LoadTime = tick()
-    E0.Key            = key
-    _G.Key                   = key
-
-    ServerId = decrypted.ServerId or ""
+    ServerId = d.ServerId or ""
 
     if _G.MS999_UI then pcall(function() _G.MS999_UI:Destroy() end); _G.MS999_UI = nil end
 
@@ -733,9 +749,9 @@ local function LoadScript(decrypted, key)
         return
     end
 
-    local chunk = SafeLoadstring(decrypted.Body)
+    local chunk = SafeLoadstring(d.Body)
     if not chunk then return KickPlayer("Load failed", 0) end
-    local ok = pcall(chunk)
+    local ok = pcall(chunk, true, q, s, r, p, SCRIPT_NAME_LOCKED, tick(), h, HttpRequest, Chain, ChainEnv)
     if not ok then return KickPlayer("Run failed", 0) end
 
     print("[999MS] Main script loaded")
@@ -753,10 +769,13 @@ local function FetchAndLoad(key, sname)
     end
     local authScope = 0
     local hwid = GetHWID()
+    if type(hwid) ~= "string" then
+        return nil, "Trusted executor device ID unavailable"
+    end
     local userId = tostring(Players.LocalPlayer.UserId)
 
     -- One attempt, one counter. It used to accumulate across attempts, so a
-    -- failed auto-load (stale E0.Key) followed by a manual login left
+    -- failed auto-load with a stale cached key followed by a manual login left
     -- Step at 5 and the hand-off kicked with S9 even though the key passed.
     Step = 1
 
@@ -774,7 +793,7 @@ local function FetchAndLoad(key, sname)
         key = key, hwid = hwid, userId = userId, scriptName = sname,
         Rng1 = rng.Rng1, Rng2 = rng.Rng2, Rng3 = rng.Rng3,
         Rng4 = rng.Rng4, Rng5 = rng.Rng5, RngFloat = rng.RngFloat,
-    })
+    }, hwid)
 
     if not r1 then return nil, err or "Connection failed" end
     if r1.status == 429 then return nil, "Rate limited" end
@@ -822,7 +841,7 @@ local function FetchAndLoad(key, sname)
     body.hop = r1.data.hop
     body.eq = equationAnswer
 
-    local r2, err2 = postJSON("/api/script", body)
+    local r2, err2 = postJSON("/api/script", body, hwid)
     if not r2 then return nil, err2 or "Script fetch failed" end
     if r2.status ~= 200 then return nil, r2.body or "Script fetch failed" end
     if not ChecksActive then return nil, "Cancelled" end
@@ -857,7 +876,7 @@ local function FetchAndLoad(key, sname)
 
     authScope = authScope + 1
     if authScope ~= 3 then return nil, "Authentication flow interrupted" end
-    return decrypted
+    return decrypted, hwid
 end
 
 -- ═══ UI ═══
@@ -1028,6 +1047,7 @@ local function MakeUI()
         status.Text = msg or ""
         status.TextColor3 = color or Color3.fromRGB(255, 100, 100)
     end
+    if E1 ~= "" then setStatus(E1) end
     local function setBusy(isBusy)
         busy = isBusy
         btn.Text = isBusy and "Checking..." or "Verify Key"
@@ -1044,19 +1064,23 @@ local function MakeUI()
         setBusy(true)
         setStatus("Verifying...", Color3.fromRGB(200, 200, 120))
         task.spawn(function()
-            local decrypted, err = FetchAndLoad(key, SCRIPT_NAME_LOCKED)
+            local decrypted, result = FetchAndLoad(key, SCRIPT_NAME_LOCKED)
             if not ChecksActive then return end
-            if not decrypted then setStatus(err or "Error"); setBusy(false); return end
+            if not decrypted then setStatus(result or "Error"); setBusy(false); return end
             setStatus("Success!", Color3.fromRGB(100, 255, 100))
             task.wait(0.3)
-            if ChecksActive then LoadScript(decrypted, key) end
+            if ChecksActive then LoadScript(decrypted, result) end
         end)
     end)
 
     buyBtn.MouseButton1Click:Connect(function()
         task.spawn(function()
             local hwid = GetHWID()
-            local r, err = postJSON("/api/start", { hwid = hwid })
+            if type(hwid) ~= "string" then
+                setStatus("Trusted executor device ID unavailable")
+                return
+            end
+            local r, err = postJSON("/api/start", { hwid = hwid }, hwid)
             if not ChecksActive then return end
             if not r then setStatus(err or "Cannot open link"); return end
             if r.status ~= 200 or not r.data.url then
@@ -1083,11 +1107,12 @@ if USER_KEY == "" then
 end
 
 task.spawn(function()
-    local decrypted, err = FetchAndLoad(USER_KEY, SCRIPT_NAME_LOCKED)
+    local decrypted, result = FetchAndLoad(USER_KEY, SCRIPT_NAME_LOCKED)
     if not decrypted then
-        print("[999MS] Auto-load failed:", err)
+        E1 = result or "Invalid key"
+        print("[999MS] Auto-load failed:", E1)
         MakeUI()
         return
     end
-    LoadScript(decrypted, USER_KEY)
+    LoadScript(decrypted, result)
 end)
