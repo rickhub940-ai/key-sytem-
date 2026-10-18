@@ -21,7 +21,8 @@ const {
   checkEquationAnswer,
 } = require('../lib/999MS-server-sdk');
 const {
-  revokeHwid, revokeHwidHash, revokeUser, revokeIp, checkRevoked, stats, listRevocations,
+  revokeHwid, revokeHwidHash, revokeUser, revokeIp, revokeKey, revokeKeyHash,
+  isKeyRevoked, checkRevoked, stats, listRevocations,
 } = require('../lib/revoke');
 
 const sessions = new Map();
@@ -582,6 +583,12 @@ async function handleVerify(req, res, ip) {
 
   if (typeof key !== 'string' || !key.trim())
     return res.status(400).json({ valid: false, error: 'key required' });
+  // The key shown in the reported bypass is now revoked server-side. Compare
+  // only its digest; never echo or log the raw key.
+  if (isKeyRevoked(key)) {
+    noteEvent('verify_reject', 'revoked key | key ' + crypto.createHash('sha256').update(key.trim()).digest('hex').slice(0, 12));
+    return res.status(200).json({ valid: false, message: 'Invalid key' });
+  }
 
   const hwidCheck = hwidFromRequest(req, hwid);
   if (!hwidCheck.ok) {
@@ -931,6 +938,11 @@ async function handleAdminBan(req, res) {
       if (!/^[a-f0-9]{64}$/i.test(value)) return res.status(400).json({ error: 'invalid hash' });
       revokeHwidHash(value);
       break;
+    case 'key': revokeKey(value); break;
+    case 'keyHash':
+      if (!/^[a-f0-9]{64}$/i.test(value)) return res.status(400).json({ error: 'invalid hash' });
+      revokeKeyHash(value);
+      break;
     case 'user': revokeUser(value); break;
     case 'ip':   revokeIp(value);   break;
     default: return res.status(400).json({ error: 'invalid type' });
@@ -938,7 +950,9 @@ async function handleAdminBan(req, res) {
 
   return res.status(200).json({
     ok: true, type,
-    value: value.slice(0, 20) + (value.length > 20 ? '...' : ''),
+    value: type === 'key'
+      ? `sha256:${crypto.createHash('sha256').update(value.trim()).digest('hex').slice(0, 12)}`
+      : value.slice(0, 20) + (value.length > 20 ? '...' : ''),
     stats: stats(),
   });
     }

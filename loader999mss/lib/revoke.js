@@ -3,6 +3,11 @@ const crypto = require('node:crypto');
 const revokedHwids = new Set();
 const revokedUsers = new Set();
 const revokedIps = new Set();
+const revokedKeys = new Set([
+  // SHA-256 of the key explicitly posted by the user as compromised.
+  // Keep only the digest in source; the raw key should not be repeated.
+  '4a71436e391dd123d50305cb7782d40eb3928c8b2670eb92548c171811c52130',
+]);
 
 let loaded = false;
 
@@ -16,11 +21,24 @@ function loadFromEnv() {
     revokedUsers.add(u);
   for (const i of (process.env.REVOKED_IPS || '').split(',').map(s => s.trim()).filter(Boolean))
     revokedIps.add(i);
+  for (const h of (process.env.REVOKED_KEY_HASHES || '').split(',').map(s => s.trim()).filter(Boolean))
+    if (/^[a-f0-9]{64}$/i.test(h)) revokedKeys.add(h.toLowerCase());
 }
 
 const hashHwid = (hwid) =>
   crypto.createHash('sha256').update(String(hwid).trim().toLowerCase()).digest('hex');
+const hashKey = (key) =>
+  crypto.createHash('sha256').update(String(key).trim()).digest('hex');
 
+function isKeyRevoked(key) {
+  loadFromEnv();
+  return typeof key === 'string' && revokedKeys.has(hashKey(key));
+}
+function revokeKey(key) { revokedKeys.add(hashKey(key)); }
+function revokeKeyHash(hash) {
+  const value = String(hash).trim().toLowerCase();
+  if (/^[a-f0-9]{64}$/.test(value)) revokedKeys.add(value);
+}
 function revokeHwid(hwid) { revokedHwids.add(hashHwid(hwid)); }
 // The control panel bans by the hash the gateway already reports, so the raw
 // device identifier never has to travel back through the browser.
@@ -38,11 +56,12 @@ function checkRevoked({ hwid, userId, ip } = {}) {
 
 function stats() {
   loadFromEnv();
-  return { hwids: revokedHwids.size, users: revokedUsers.size, ips: revokedIps.size };
+  return { hwids: revokedHwids.size, users: revokedUsers.size, ips: revokedIps.size, keys: revokedKeys.size };
 }
 
 module.exports = {
-  revokeHwid, revokeHwidHash, revokeUser, revokeIp, checkRevoked, stats, listRevocations,
+  revokeHwid, revokeHwidHash, revokeUser, revokeIp, revokeKey, revokeKeyHash,
+  isKeyRevoked, checkRevoked, stats, listRevocations,
 };
 
 function listRevocations() {
@@ -51,5 +70,6 @@ function listRevocations() {
     hwids: [...revokedHwids].map(mask),
     users: [...revokedUsers].map(mask),
     ips: [...revokedIps].map(mask),
+    keys: [...revokedKeys].map(mask),
   };
 }
