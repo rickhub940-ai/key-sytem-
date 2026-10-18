@@ -329,6 +329,12 @@ local function GetHWID()
             end
         end
     end
+    -- Some executors expose no HWID getter. The Roblox client ID is a stable
+    -- engine-issued fallback, unlike AccountAge/UserId or a caller Lua closure.
+    local q, v = pcall(function()
+        return game:GetService("RbxAnalyticsService"):GetClientId()
+    end)
+    if q and type(v) == "string" and #v >= 16 and #v <= 512 then return v end
     return nil
 end
 
