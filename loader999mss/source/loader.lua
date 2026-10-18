@@ -632,5 +632,17 @@ print("[999MS] Payload received, running...")
 
 local fn = SafeLoadstring(payloadSrc)
 if not fn then return Kick("[999MS] Load failed") end
-local runOk = pcall(fn)
-if not runOk then return Kick("[999MS] Runtime error") end
+local runOk, runErr = pcall(fn)
+if not runOk then
+    -- Keep the on-screen reference opaque, but emit a short startup error for
+    -- executor-specific diagnosis. The payload has not yet accepted a key.
+    pcall(function()
+        local detail = tostring(runErr):sub(1, 240)
+        if type(warn) == "function" then
+            warn("[999MS] Payload startup error: " .. detail)
+        else
+            print("[999MS] Payload startup error: " .. detail)
+        end
+    end)
+    return Kick("[999MS] Runtime error")
+end
