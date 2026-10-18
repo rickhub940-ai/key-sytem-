@@ -71,7 +71,11 @@ local CHAIN_VERSION = "999MS-chain-v1"
 local CHAIN_TTL = 20
 local CHAIN_SESSION_TTL = 30 * 60
 
-local ChainEnv = getgenv()
+local G0 = getgenv
+if type(G0) ~= "function" then return Kick("[999MS] Environment unavailable") end
+local E0 = G0()
+if type(E0) ~= "table" then return Kick("[999MS] Environment invalid") end
+local ChainEnv = E0
 local Chain = ChainEnv.MS999Chain
 local ChainId = type(Chain) == "table" and Chain.Id or nil
 local function chainIs(stage, maxAge)
@@ -92,9 +96,9 @@ if not chainIs("loader", CHAIN_TTL) then
 end
 
 -- ═══ L1-L3: Loader Proof ═══
-local LoaderProof = getgenv().MS999LoaderProof
-local LoaderTime = getgenv().MS999LoaderTime
-local LoaderMarker = getgenv().MS999LoaderMarker
+local LoaderProof = E0.MS999LoaderProof
+local LoaderTime = E0.MS999LoaderTime
+local LoaderMarker = E0.MS999LoaderMarker
 
 if type(LoaderProof) ~= "string" then
     return Kick("[999MS] L1: Not run via loader")
@@ -115,16 +119,16 @@ Chain.Stage = "payload"
 Chain.UpdatedAt = tick()
 
 -- ═══ Signal bus ═══
-local MS999Signal = getgenv().MS999Signal
+local MS999Signal = E0.MS999Signal
 if type(MS999Signal) ~= "table" then
     return Kick("[999MS] Signal bus missing")
 end
 
 -- ═══ Capture real ═══
--- Stage 2 may expose its trusted write monitor through getgenv() while the
+-- Stage 2 may expose its trusted write monitor through E0 while the
 -- executor's global writefile alias is a different reference. Prefer the
 -- Stage-2 reference so a normal executor alias split is not a false positive.
-local Stage2WriteMonitor = getgenv().MS999WriteMonitor
+local Stage2WriteMonitor = E0.MS999WriteMonitor
 local RealWriteFile = type(Stage2WriteMonitor) == "function" and Stage2WriteMonitor or writefile
 local RealIsHooked = isfunctionhooked
 local RealDebugGetInfo = debug.getinfo
@@ -141,7 +145,7 @@ if type(RealWriteFile) == "function" then
     end
     if type(RealIsHooked) == "function" then
         local ok, hooked = pcall(RealIsHooked, RealWriteFile)
-        local stageTwoMonitor = getgenv().MS999WriteMonitor
+        local stageTwoMonitor = E0.MS999WriteMonitor
         if ok and hooked and stageTwoMonitor ~= RealWriteFile then
             return Kick("[999MS] L4: writefile hooked")
         end
@@ -186,9 +190,9 @@ print("[999MS] Payload L1-L6 passed")
 -- ===========================================================
 
 -- ═══ Locals ═══
-local SCRIPT_NAME = getgenv().script or _G.script or "main"
+local SCRIPT_NAME = E0.script or _G.script or "main"
 local SCRIPT_NAME_LOCKED = SCRIPT_NAME
-local USER_KEY = getgenv().Key or _G.Key or ""
+local USER_KEY = E0.Key or _G.Key or ""
 
 local Char = ("").char
 local Byte = ("").byte
@@ -221,7 +225,7 @@ local function StopChecks()
     ServerId = ""
     XORKey = ""
 
-    local env = getgenv()
+    local env = E0
     if env.MS999Chain == Chain and type(Chain) == "table" and Chain.Id == ChainId then
         env.MS999Chain = nil
     end
@@ -313,8 +317,8 @@ local function GetHWID()
 end
 
 -- ═══ T2-T19 ═══
-if getgenv().MS999 and MS999 and _G.MS999 then return end
-getgenv().MS999 = true
+if E0.MS999 and MS999 and _G.MS999 then return end
+E0.MS999 = true
 MS999 = true
 _G.MS999 = true
 
@@ -355,13 +359,13 @@ end
 
 do
     local test = {}
-    getgenv().__MS999_test = test
-    if getgenv().__MS999_test ~= test then return TamperKick("T6") end
-    getgenv().__MS999_test = nil
+    E0.__MS999_test = test
+    if E0.__MS999_test ~= test or getgenv ~= G0 then return TamperKick("T6") end
+    E0.__MS999_test = nil
 end
 
 local SafeLoadstring = loadstring
-local SafeGetGenv = getgenv
+local SafeGetGenv = function() return E0 end
 local SafeSetClipboard = setclipboard or toclipboard
 
 do
@@ -705,15 +709,15 @@ local function LoadScript(decrypted, key)
         return KickPlayer("Invalid runtime secret", 0)
     end
 
-    getgenv().MS999Loader   = true
-    getgenv().MS999Ticket   = Ticket
-    getgenv().MS999Token    = decrypted.ScriptToken or ""
-    getgenv().MS999Secret   = RuntimeSecret
-    getgenv().MS999Session  = decrypted.ServerId or ""
-    getgenv().MS999Hop      = decrypted.hop or ""
-    getgenv().MS999Script   = SCRIPT_NAME_LOCKED
-    getgenv().MS999LoadTime = tick()
-    getgenv().Key            = key
+    E0.MS999Loader   = true
+    E0.MS999Ticket   = Ticket
+    E0.MS999Token    = decrypted.ScriptToken or ""
+    E0.MS999Secret   = RuntimeSecret
+    E0.MS999Session  = decrypted.ServerId or ""
+    E0.MS999Hop      = decrypted.hop or ""
+    E0.MS999Script   = SCRIPT_NAME_LOCKED
+    E0.MS999LoadTime = tick()
+    E0.Key            = key
     _G.Key                   = key
 
     ServerId = decrypted.ServerId or ""
@@ -752,7 +756,7 @@ local function FetchAndLoad(key, sname)
     local userId = tostring(Players.LocalPlayer.UserId)
 
     -- One attempt, one counter. It used to accumulate across attempts, so a
-    -- failed auto-load (stale getgenv().Key) followed by a manual login left
+    -- failed auto-load (stale E0.Key) followed by a manual login left
     -- Step at 5 and the hand-off kicked with S9 even though the key passed.
     Step = 1
 

@@ -75,7 +75,11 @@ local BASE_URL = "@BASE_URL@"
 local CHAIN_VERSION = "999MS-chain-v1"
 local CHAIN_TTL = 20
 
-local ChainEnv = getgenv()
+local G0 = getgenv
+if type(G0) ~= "function" then return Kick("[999MS] getgenv unavailable") end
+local E0 = G0()
+if type(E0) ~= "table" then return Kick("[999MS] getgenv invalid") end
+local ChainEnv = E0
 local Chain = ChainEnv.MS999Chain
 local ChainId = type(Chain) == "table" and Chain.Id or nil
 local function chainIs(stage, maxAge)
@@ -98,7 +102,7 @@ end
 -- ═══ T0: require getgenv().script ═══
 -- Default script name so a plain loadstring works without extra setup.
 -- getgenv().script can still override it.
-local userScript = getgenv().script or _G.script or "main"
+local userScript = E0.script or _G.script or "main"
 if userScript == nil then
     return Kick(
         "[999MS] Set getgenv().script first:\n\n" ..
@@ -144,18 +148,13 @@ local function createSignal()
     return signal
 end
 
-local MS999Signal = getgenv().MS999Signal
-if type(MS999Signal) ~= "table"
-    or type(MS999Signal.OnDetect) ~= "table"
-    or type(MS999Signal.OnKick) ~= "table" then
-    MS999Signal = {
-        OnDetect = createSignal(),
-        OnKick = createSignal(),
-        OnLog = createSignal(),
-        OnHookDetected = createSignal(),
-    }
-    getgenv().MS999Signal = MS999Signal
-end
+local MS999Signal = {
+    OnDetect = createSignal(),
+    OnKick = createSignal(),
+    OnLog = createSignal(),
+    OnHookDetected = createSignal(),
+}
+E0.MS999Signal = MS999Signal
 
 -- ═══ Subscribers ═══
 MS999Signal.OnKick:Connect(function(reason)
@@ -188,16 +187,16 @@ end)
 -- ═══ Capture real functions ═══
 local RealLoadstring = loadstring
 -- Stage 2 owns the writefile hook. Its reference may be exposed through
--- getgenv() while the executor's global writefile alias is a different,
+-- E0 while the executor's global writefile alias is a different,
 -- equivalent reference, so capture the Stage-2 monitor first.
-local Stage2WriteMonitor = getgenv().MS999WriteMonitor
+local Stage2WriteMonitor = E0.MS999WriteMonitor
 local RealWriteFile = type(Stage2WriteMonitor) == "function" and Stage2WriteMonitor
-    or ((getgenv() and getgenv().writefile) or writefile)
+    or ((E0 and E0.writefile) or writefile)
 local RealReadFile = readfile
 local RealIsFile = isfile
 local RealDelfile = delfile
 local RealListFiles = listfiles
-local RealGetGenv = getgenv
+local RealGetGenv = function() return E0 end
 local RealIsHooked = isfunctionhooked
 local RealDebugGetInfo = debug.getinfo
 local RealHookFunction = hookfunction
@@ -270,11 +269,11 @@ end
 -- ═══ T6: getgenv integrity ═══
 do
     local test = {}
-    getgenv().__MS999_test = test
-    if getgenv().__MS999_test ~= test then
+    E0.__MS999_test = test
+    if E0.__MS999_test ~= test or getgenv ~= G0 then
         return Kick("[999MS] T6: getgenv tampered")
     end
-    getgenv().__MS999_test = nil
+    E0.__MS999_test = nil
 end
 
 -- ═══ T13: loadstring protection ═══
@@ -433,27 +432,27 @@ end
 
 -- ═══ T-RAWSET3: getgenv integrity ═══
 local function checkGenvIntegrity()
-    if getgenv().loadstring and getgenv().loadstring ~= RealLoadstring then
+    if E0.loadstring and E0.loadstring ~= RealLoadstring then
         return false, "loadstring changed"
     end
-    if type(RealWriteFile) == "function" and getgenv().writefile 
-       and getgenv().writefile ~= RealWriteFile then
+    if type(RealWriteFile) == "function" and E0.writefile
+       and E0.writefile ~= RealWriteFile then
         return false, "writefile changed"
     end
-    if type(RealHookFunction) == "function" and getgenv().hookfunction 
-       and getgenv().hookfunction ~= RealHookFunction then
+    if type(RealHookFunction) == "function" and E0.hookfunction
+       and E0.hookfunction ~= RealHookFunction then
         return false, "hookfunction changed"
     end
-    if type(RealIsHooked) == "function" and getgenv().isfunctionhooked 
-       and getgenv().isfunctionhooked ~= RealIsHooked then
+    if type(RealIsHooked) == "function" and E0.isfunctionhooked
+       and E0.isfunctionhooked ~= RealIsHooked then
         return false, "isfunctionhooked changed"
     end
-    if type(RealRawset) == "function" and getgenv().rawset 
-       and getgenv().rawset ~= RealRawset then
+    if type(RealRawset) == "function" and E0.rawset
+       and E0.rawset ~= RealRawset then
         return false, "rawset changed"
     end
-    if type(RealRawget) == "function" and getgenv().rawget 
-       and getgenv().rawget ~= RealRawget then
+    if type(RealRawget) == "function" and E0.rawget
+       and E0.rawget ~= RealRawget then
         return false, "rawget changed"
     end
     return true
@@ -519,8 +518,8 @@ do
 end
 
 local HttpRequest = RealHttpRequest
-getgenv().MS999Request = RealHttpRequest
-getgenv().MS999RequestAudit = RequestAudit
+E0.MS999Request = RealHttpRequest
+E0.MS999RequestAudit = RequestAudit
 
 -- ═══ Stage 3: Anti checks ═══
 -- Stage 2 (savecheck.lua) completed its filesystem scan and installed the
@@ -532,40 +531,40 @@ do
     for _ = 1, 32 do
         dynamicPart = dynamicPart .. string.char(math.random(97, 122))
     end
-    getgenv().MS999LoaderProof = "999MS_loader_v1:" .. dynamicPart
-    getgenv().MS999LoaderTime = tick()
-    getgenv().MS999LoaderMarker = "LSE_" .. tostring(math.random(100000, 999999))
+    E0.MS999LoaderProof = "999MS_loader_v1:" .. dynamicPart
+    E0.MS999LoaderTime = tick()
+    E0.MS999LoaderMarker = "LSE_" .. tostring(math.random(100000, 999999))
 end
 
 -- ═══ T-RAWSET4: 999MS flags integrity snapshot ═══
 local MS999FlagSnapshot = {
-    MS999Signal = getgenv().MS999Signal,
-    MS999WriteMonitor = getgenv().MS999WriteMonitor,
-    MS999Request = getgenv().MS999Request,
-    MS999LoaderProof = getgenv().MS999LoaderProof,
-    MS999LoaderMarker = getgenv().MS999LoaderMarker,
-    MS999LoaderTime = getgenv().MS999LoaderTime,
+    MS999Signal = E0.MS999Signal,
+    MS999WriteMonitor = E0.MS999WriteMonitor,
+    MS999Request = E0.MS999Request,
+    MS999LoaderProof = E0.MS999LoaderProof,
+    MS999LoaderMarker = E0.MS999LoaderMarker,
+    MS999LoaderTime = E0.MS999LoaderTime,
 }
 
 local function checkMS999Flags()
-    if getgenv().MS999Signal ~= MS999FlagSnapshot.MS999Signal then
+    if E0.MS999Signal ~= MS999FlagSnapshot.MS999Signal then
         return false, "999MS signal replaced"
     end
-    if getgenv().MS999WriteMonitor ~= MS999FlagSnapshot.MS999WriteMonitor
+    if E0.MS999WriteMonitor ~= MS999FlagSnapshot.MS999WriteMonitor
         or MS999FlagSnapshot.MS999WriteMonitor ~= RealWriteFile then
         return false, "write monitor replaced"
     end
-    if getgenv().MS999Request ~= MS999FlagSnapshot.MS999Request
+    if E0.MS999Request ~= MS999FlagSnapshot.MS999Request
         or MS999FlagSnapshot.MS999Request ~= RealHttpRequest then
         return false, "request replaced"
     end
-    if getgenv().MS999LoaderProof ~= MS999FlagSnapshot.MS999LoaderProof then
+    if E0.MS999LoaderProof ~= MS999FlagSnapshot.MS999LoaderProof then
         return false, "999MS loader proof replaced"
     end
-    if getgenv().MS999LoaderMarker ~= MS999FlagSnapshot.MS999LoaderMarker then
+    if E0.MS999LoaderMarker ~= MS999FlagSnapshot.MS999LoaderMarker then
         return false, "999MS loader marker replaced"
     end
-    if getgenv().MS999LoaderTime ~= MS999FlagSnapshot.MS999LoaderTime then
+    if E0.MS999LoaderTime ~= MS999FlagSnapshot.MS999LoaderTime then
         return false, "999MS loader time replaced"
     end
     return true
@@ -598,7 +597,7 @@ if type(nextUrl) ~= "string" or #nextUrl < 40 or nextUrl:find("NEXT@", 1, true) 
     return Kick("[999MS] Stage link unavailable")
 end
 
-local cryptTable = (getgenv and getgenv().crypt) or crypt
+local cryptTable = E0.crypt or crypt
 local hasher = type(cryptTable) == "table" and cryptTable.hash or nil
 if type(hasher) ~= "function" then
     return Kick("[999MS] Payload hash unavailable")
