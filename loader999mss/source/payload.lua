@@ -192,7 +192,10 @@ print("[999MS] Payload L1-L6 passed")
 -- ═══ Locals ═══
 local SCRIPT_NAME = E0.script or _G.script or "main"
 local SCRIPT_NAME_LOCKED = SCRIPT_NAME
-local USER_KEY = E0.Key or _G.Key or ""
+-- Key may be pre-seeded by unrelated executor scripts; only a string is a key.
+-- A function/table here would otherwise be assigned to TextBox.Text at UI startup.
+local USER_KEY = type(E0.Key) == "string" and E0.Key
+    or (type(_G.Key) == "string" and _G.Key or "")
 local E1 = ""
 -- Capture the caller's one-shot key locally; never keep or re-publish it in
 -- the shared executor environment.
@@ -1052,7 +1055,7 @@ local function MakeUI()
 
     local busy = false
     local function setStatus(msg, color)
-        status.Text = msg or ""
+        status.Text = type(msg) == "string" and msg or ""
         status.TextColor3 = color or Color3.fromRGB(255, 100, 100)
     end
     if E1 ~= "" then setStatus(E1) end
