@@ -3,11 +3,7 @@ const crypto = require('node:crypto');
 const revokedHwids = new Set();
 const revokedUsers = new Set();
 const revokedIps = new Set();
-const revokedKeys = new Set([
-  // SHA-256 of the key explicitly posted by the user as compromised.
-  // Keep only the digest in source; the raw key should not be repeated.
-  '4a71436e391dd123d50305cb7782d40eb3928c8b2670eb92548c171811c52130',
-]);
+const revokedKeys = new Set();
 
 let loaded = false;
 

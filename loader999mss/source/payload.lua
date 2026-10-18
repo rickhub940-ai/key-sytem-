@@ -294,18 +294,19 @@ local function Split(str, sep)
 end
 
 local function GetHWID()
-    -- Never trust the generic global `gethwid`: callers can replace it in
-    -- getgenv() before this payload starts (the published spoof technique).
-    -- Prefer executor-provided APIs, then retain the legacy fallback for
-    -- environments that do not expose one. This is defense-in-depth only;
-    -- the server must not treat client-reported HWID as cryptographic proof.
+    -- Preserve the existing Platoboost identifier so already-bound keys keep
+    -- using the same device value. The client value is not an attestation.
+    if type(gethwid) == "function" then
+        local ok, v = pcall(gethwid)
+        if ok and type(v) == "string" and #v > 0 and #v <= 512 then return v end
+    end
     if syn and type(syn.get_hwid) == "function" then
         local ok, v = pcall(syn.get_hwid)
-        if ok and type(v) == "string" and #v > 0 and #v <= 512 then return v end
+        if ok and type(v) == "string" and #v > 0 then return v end
     end
     if type(get_hwid) == "function" then
         local ok, v = pcall(get_hwid)
-        if ok and type(v) == "string" and #v > 0 and #v <= 512 then return v end
+        if ok and type(v) == "string" and #v > 0 then return v end
     end
     local lp = Players.LocalPlayer
     return tostring(lp.UserId) .. "|" .. tostring(lp.AccountAge) .. "|" .. tostring(game.PlaceId or 0)

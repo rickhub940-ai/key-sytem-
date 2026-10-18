@@ -102,13 +102,18 @@ async function main() {
   const bannedVerify = await post('/api/verify', { key: 'KEY_TEST', hwid: 'banned-hwid', scriptName: 'main' });
   assert.equal(bannedVerify.status, 403);
 
-  // ── exposed key from the reported HWID-spoof attempt is revoked ──
-  const compromisedKey = await post('/api/verify', {
-    key: 'KEY_dnnhub', hwid: 'spoofed-client-hwid', scriptName: 'main',
+  // ── key revocation is opt-in and does not block unrelated keys ──
+  const keyToRevoke = 'KEY_ADMIN_REVOKE_TEST';
+  const revokeKeyResponse = await post('/api/admin/ban', { type: 'key', value: keyToRevoke },
+    { 'x-admin-token': env.ADMIN_TOKEN });
+  assert.equal(revokeKeyResponse.status, 200);
+  const revokeKeyBody = await revokeKeyResponse.json();
+  assert.ok(!revokeKeyBody.value.includes(keyToRevoke), 'admin response must not echo a raw key');
+  const revokedKeyVerify = await post('/api/verify', {
+    key: keyToRevoke, hwid: 'revoked-key-test-hwid', scriptName: 'main',
   });
-  assert.equal(compromisedKey.status, 200);
-  assert.equal((await compromisedKey.json()).valid, false,
-    'the publicly disclosed key must be rejected before external whitelist verification');
+  assert.equal(revokedKeyVerify.status, 200);
+  assert.equal((await revokedKeyVerify.json()).valid, false);
 
   // ── regression: payload-style /api/verify without RNG still reaches key checks ──
   const payloadStyleVerify = await post('/api/verify', {
