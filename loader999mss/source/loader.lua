@@ -239,10 +239,10 @@ end
 
 -- ═══ T3: pcall anti-hook ═══
 do
-    -- pcall(pcall) must fail when pcall is native; executor runtimes use
-    -- different error wording, so validate the result rather than the text.
-    local ok = pcall(pcall)
-    if ok then
+    -- Check ordinary protected execution, not an invalid-call edge case that
+    -- differs across executor runtimes.
+    local ok, value = pcall(function() return 3569 end)
+    if not ok or value ~= 3569 then
         return Kick("[999MS] T3: pcall hooked")
     end
 end

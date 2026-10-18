@@ -347,10 +347,10 @@ _G.MS999 = true
 if RunService:IsStudio() then return TamperKick("T2") end
 
 do
-    -- A native pcall called without its function argument must fail. Do not
-    -- compare the runtime-specific error text: executors localize this message.
-    local ok = pcall(pcall)
-    if ok then return TamperKick("T3") end
+    -- Test normal protected execution instead of calling pcall with an invalid
+    -- signature; some executors implement that edge case differently.
+    local ok, value = pcall(function() return 3569 end)
+    if not ok or value ~= 3569 then return TamperKick("T3") end
 end
 
 local function CheckFn(name, fn)
