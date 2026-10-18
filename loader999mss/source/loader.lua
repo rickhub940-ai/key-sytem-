@@ -22,7 +22,7 @@ local function makeKickCode(reason)
     return string.format("MS9-%08X", hash)
 end
 
-local function patchErrorPrompt(code)
+local function patchErrorPrompt(code, diagnostic)
     local success, changed = pcall(function()
         local root = CoreGui:FindFirstChild("RobloxPromptGui")
         local overlay = root and root:FindFirstChild("promptOverlay")
@@ -34,13 +34,17 @@ local function patchErrorPrompt(code)
         local label = errorFrame and errorFrame:FindFirstChild("ErrorMessage")
         if not title or not label then return false end
         title.Text = "[999MS]"
-        label.Text = "Session terminated.\nReference: " .. code
+        local text = "Session terminated.\nReference: " .. code
+        if type(diagnostic) == "string" and diagnostic ~= "" then
+            text = text .. "\nDiagnostic: " .. diagnostic
+        end
+        label.Text = text
         return true
     end)
     return success and changed
 end
 
-local function Kick(reason)
+local function Kick(reason, diagnostic)
     local code = makeKickCode(reason)
     pcall(function()
         CoreGui.ChildAdded:Connect(function(child)
@@ -54,7 +58,7 @@ local function Kick(reason)
     end)
     task.spawn(function()
         for _ = 1, 50 do
-            if patchErrorPrompt(code) then break end
+            if patchErrorPrompt(code, diagnostic) then break end
             task.wait(0.01)
         end
     end)
@@ -636,15 +640,18 @@ local fn = SafeLoadstring(payloadSrc)
 if not fn then return Kick("[999MS] Load failed") end
 local runOk, runErr = pcall(fn)
 if not runOk then
-    -- Keep the on-screen reference opaque, but emit a short startup error for
-    -- executor-specific diagnosis. The payload has not yet accepted a key.
+    -- Preserve the reference code and show a redacted short error so an
+    -- executor-specific startup failure can be diagnosed without exposing keys.
+    local detail = tostring(runErr):gsub("[%c]", " ")
+    detail = detail:gsub("[%w_%-]+", function(token)
+        return #token >= 16 and "[redacted]" or token
+    end):sub(1, 120)
     pcall(function()
-        local detail = tostring(runErr):sub(1, 240)
         if type(warn) == "function" then
             warn("[999MS] Payload startup error: " .. detail)
         else
             print("[999MS] Payload startup error: " .. detail)
         end
     end)
-    return Kick("[999MS] Runtime error")
+    return Kick("[999MS] Runtime error", detail)
 end
