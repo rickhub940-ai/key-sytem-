@@ -235,8 +235,10 @@ end
 
 -- ═══ T3: pcall anti-hook ═══
 do
-    local ok, err = pcall(pcall)
-    if ok or err ~= "missing argument #1" then
+    -- pcall(pcall) must fail when pcall is native; executor runtimes use
+    -- different error wording, so validate the result rather than the text.
+    local ok = pcall(pcall)
+    if ok then
         return Kick("[999MS] T3: pcall hooked")
     end
 end

@@ -347,8 +347,10 @@ _G.MS999 = true
 if RunService:IsStudio() then return TamperKick("T2") end
 
 do
-    local ok, err = pcall(pcall)
-    if ok or err ~= "missing argument #1" then return TamperKick("T3") end
+    -- A native pcall called without its function argument must fail. Do not
+    -- compare the runtime-specific error text: executors localize this message.
+    local ok = pcall(pcall)
+    if ok then return TamperKick("T3") end
 end
 
 local function CheckFn(name, fn)
